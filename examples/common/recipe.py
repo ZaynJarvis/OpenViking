@@ -4,7 +4,7 @@ RAG Pipeline - Retrieval-Augmented Generation using OpenViking + LLM
 Focused on querying and answer generation, not resource management
 """
 
-import boring_logging_config  # Configure logging (set OV_DEBUG=1 for debug mode)
+from . import boring_logging_config  # Configure logging (set OV_DEBUG=1 for debug mode)
 import openviking as ov
 import json
 import requests
@@ -72,7 +72,9 @@ class Recipe:
 
         # Extract top results
         search_results = []
-        for i, resource in enumerate(results.resources[:top_k] + results.memories[:top_k]): # ignore SKILLs for mvp
+        for i, resource in enumerate(
+            results.resources[:top_k] + results.memories[:top_k]
+        ):  # ignore SKILLs for mvp
             try:
                 content = self.client.read(resource.uri)
                 search_results.append(
@@ -178,12 +180,16 @@ class Recipe:
         # Step 2: Build context from search results
         context_text = "no relevant information found, try answer based on existing knowledge."
         if search_results:
-            context_text = "Answer should pivoting to the following:\n<context>\n" + "\n\n".join(
-                [
-                    f"[Source {i + 1}] (relevance: {r['score']:.4f})\n{r['content']}"
-                    for i, r in enumerate(search_results)
-                ]
-            ) + "\n</context>"
+            context_text = (
+                "Answer should pivoting to the following:\n<context>\n"
+                + "\n\n".join(
+                    [
+                        f"[Source {i + 1}] (relevance: {r['score']:.4f})\n{r['content']}"
+                        for i, r in enumerate(search_results)
+                    ]
+                )
+                + "\n</context>"
+            )
 
         # Step 3: Build messages array for chat completion API
         messages = []
@@ -212,7 +218,7 @@ class Recipe:
 
         # Add current user message
         messages.append({"role": "user", "content": current_prompt})
-        
+
         # print("[DEBUG]:", messages)
 
         # Step 4: Call LLM with messages array

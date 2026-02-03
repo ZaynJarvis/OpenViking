@@ -3,20 +3,24 @@
 Chat with Memory - Multi-turn conversation with persistent memory using OpenViking Session API
 """
 
-import sys
-import signal
 import json
-from typing import List, Dict, Any
+import os
+import signal
+import sys
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
-from recipe import Recipe
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import threading
+
+from common.recipe import Recipe
+from prompt_toolkit import prompt
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.styles import Style
 from rich.live import Live
 from rich.spinner import Spinner
-import threading
-from prompt_toolkit import prompt
-from prompt_toolkit.styles import Style
-from prompt_toolkit.formatted_text import HTML
 
 from openviking import SyncOpenViking
 from openviking.message import TextPart
@@ -214,8 +218,8 @@ class ChatREPL:
             console.print()
 
             if result["context"]:
-                from rich.table import Table
                 from rich import box
+                from rich.table import Table
 
                 sources_table = Table(
                     title=f"📚 Sources ({len(result['context'])} documents)",
@@ -312,7 +316,7 @@ class ChatREPL:
                     memories = commit_result.get("memories_extracted", 0)
                     if memories > 0:
                         console.print(f"[dim]{memories} memories processing... [/dim]")
-                        self.client.wait_processed() # critical, waiting to process memory embedding, timeout=inf
+                        self.client.wait_processed()  # critical, waiting to process memory embedding, timeout=inf
                         console.print(f"[dim green]✨ Extracted {memories} memories[/dim green]")
                 except Exception as e:
                     console.print(f"[dim red]⚠️  Error saving session: {e}[/dim red]")

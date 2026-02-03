@@ -3,19 +3,24 @@
 Chat - Multi-turn conversation interface for OpenViking
 """
 
-import sys
+import os
 import signal
-from typing import List, Dict, Any
+import sys
+from typing import Any, Dict, List
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
-from recipe import Recipe
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import threading
+
+from common.recipe import Recipe
+from prompt_toolkit import prompt
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.styles import Style
 from rich.live import Live
 from rich.spinner import Spinner
-import threading
-from prompt_toolkit import prompt
-from prompt_toolkit.styles import Style
-from prompt_toolkit.formatted_text import HTML
 
 console = Console()
 PANEL_WIDTH = 78
@@ -227,8 +232,8 @@ class ChatREPL:
             console.print()
 
             if result["context"]:
-                from rich.table import Table
                 from rich import box
+                from rich.table import Table
 
                 sources_table = Table(
                     title=f"📚 Sources ({len(result['context'])} documents)",
@@ -275,8 +280,7 @@ class ChatREPL:
             while not self.should_exit:
                 try:
                     user_input = prompt(
-                        HTML("<style fg='cyan'>You:</style> "),
-                        style=Style.from_dict({"": ""})
+                        HTML("<style fg='cyan'>You:</style> "), style=Style.from_dict({"": ""})
                     ).strip()
 
                     if not user_input:
