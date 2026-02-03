@@ -324,26 +324,32 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Multi-turn chat with OpenViking RAG",
+        description="Multi-turn chat with persistent memory using OpenViking Session API",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Start chat with default settings
+  # Start chat with default session
   uv run chat.py
+
+  # Use custom session ID
+  uv run chat.py --session-id my-project
 
   # Adjust creativity
   uv run chat.py --temperature 0.9
 
-  # Use more context
-  uv run chat.py --top-k 10
-
   # Enable debug logging
-  OV:DEBUG=1 uv run chat.py
+  OV_DEBUG=1 uv run chat.py
         """,
     )
 
     parser.add_argument("--config", type=str, default="./ov.conf", help="Path to config file")
     parser.add_argument("--data", type=str, default="./data", help="Path to data directory")
+    parser.add_argument(
+        "--session-id",
+        type=str,
+        default="chat-interactive",
+        help="Session ID for memory (default: chat-interactive)",
+    )
     parser.add_argument("--top-k", type=int, default=5, help="Number of search results")
     parser.add_argument("--temperature", type=float, default=0.7, help="LLM temperature 0.0-1.0")
     parser.add_argument("--max-tokens", type=int, default=2048, help="Max tokens to generate")
@@ -366,6 +372,7 @@ Examples:
     repl = ChatREPL(
         config_path=args.config,
         data_path=args.data,
+        session_id=args.session_id,
         temperature=args.temperature,
         max_tokens=args.max_tokens,
         top_k=args.top_k,
