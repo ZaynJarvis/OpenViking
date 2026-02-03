@@ -161,8 +161,18 @@ class ChatREPL:
 
     def ask_question(self, question: str) -> bool:
         """Ask a question and display of answer"""
+
+        # Record user message to session
+        self.session.add_message("user", [TextPart(question)])
+
         try:
-            chat_history = self.session.get_chat_history()
+            # Convert session messages to chat history format for Recipe
+            chat_history = []
+            for msg in self.session.messages:
+                if msg.role in ["user", "assistant"]:
+                    content = msg.content if hasattr(msg, "content") else ""
+                    chat_history.append({"role": msg.role, "content": content})
+
             result = show_loading_with_spinner(
                 "Thinking...",
                 self.recipe.query,
@@ -173,6 +183,9 @@ class ChatREPL:
                 score_threshold=self.score_threshold,
                 chat_history=chat_history,
             )
+
+            # Record assistant message to session
+            self.session.add_message("assistant", [TextPart(result["answer"])])
 
             answer_text = Text(result["answer"], style="white")
             console.print(
@@ -209,8 +222,6 @@ class ChatREPL:
 
                 console.print(sources_table)
             console.print()
-
-            self.session.add_turn(question, result["answer"], result["context"])
 
             return True
 
