@@ -86,6 +86,18 @@ class ChatREPL:
     def _signal_handler(self, signum, frame):
         """Handle Ctrl-C gracefully"""
         console.print("\n")
+
+        # Commit session before exit
+        if self.session:
+            console.print("[dim]💾 Saving session...[/dim]")
+            try:
+                commit_result = self.session.commit()
+                memories = commit_result.get("memories_extracted", 0)
+                if memories > 0:
+                    console.print(f"[dim]✨ Extracted {memories} memories[/dim]")
+            except Exception as e:
+                console.print(f"[dim red]⚠️  Error saving session: {e}[/dim red]")
+
         console.print(Panel("👋 Goodbye!", style="bold yellow", padding=(0, 1), width=PANEL_WIDTH))
         self.should_exit = True
         sys.exit(0)
@@ -289,6 +301,17 @@ class ChatREPL:
                     break
 
         finally:
+            # Commit session before cleanup
+            if self.session:
+                console.print("\n[dim]💾 Saving session...[/dim]")
+                try:
+                    commit_result = self.session.commit()
+                    memories = commit_result.get("memories_extracted", 0)
+                    if memories > 0:
+                        console.print(f"[dim]✨ Extracted {memories} memories[/dim]")
+                except Exception as e:
+                    console.print(f"[dim red]⚠️  Error saving session: {e}[/dim red]")
+
             # Cleanup resources
             if self.recipe:
                 self.recipe.close()
