@@ -129,17 +129,15 @@ class ChatREPL:
         help_text = Text()
         help_text.append("Available Commands:\n\n", style="bold cyan")
         help_text.append("/help", style="bold yellow")
-        help_text.append("              - Show this help message\n", style="white")
+        help_text.append("                - Show this help message\n", style="white")
         help_text.append("/clear", style="bold yellow")
-        help_text.append("             - Clear screen (keeps history)\n", style="white")
+        help_text.append("               - Clear screen (keeps history)\n", style="white")
         help_text.append("/time <question>", style="bold yellow")
-        help_text.append("  - Ask question and show performance timing\n", style="white")
+        help_text.append("     - Ask question and show performance timing\n", style="white")
         help_text.append("/add_resource <path>", style="bold yellow")
         help_text.append(" - Add file/URL to database\n", style="white")
-        help_text.append("/exit", style="bold yellow")
-        help_text.append("              - Exit chat\n", style="white")
-        help_text.append("/quit", style="bold yellow")
-        help_text.append("              - Exit chat\n", style="white")
+        help_text.append("/exit or /quit", style="bold yellow")
+        help_text.append("       - Exit chat\n", style="white")
         help_text.append("\nKeyboard Shortcuts:\n\n", style="bold cyan")
         help_text.append("Ctrl-C", style="bold yellow")
         help_text.append("  - Exit gracefully\n", style="white")
@@ -418,16 +416,13 @@ def main():
         epilog="""
 Examples:
   # Start chat with default session
-  uv run chat.py
+  uv run chatmem.py
 
   # Use custom session ID
-  uv run chat.py --session-id my-project
-
-  # Adjust creativity
-  uv run chat.py --temperature 0.9
+  uv run chatmem.py --session-id my-project
 
   # Enable debug logging
-  OV_DEBUG=1 uv run chat.py
+  OV_DEBUG=1 uv run chatmem.py
         """,
     )
 
