@@ -15,6 +15,7 @@ from rich.text import Text
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import threading
 
+import common.boring_logging_config  # noqa: F401
 from common.recipe import Recipe
 from prompt_toolkit import prompt
 from prompt_toolkit.formatted_text import HTML

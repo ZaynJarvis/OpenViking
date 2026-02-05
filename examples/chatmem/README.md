@@ -20,11 +20,11 @@ cd examples/chatmem
 uv sync
 
 # 1. Configure (copy from query example or create new)
-cp ../query/ov.conf ./ov.conf
+vi ./ov.conf
 # Edit ov.conf with your API keys
 
 # 2. Start chatting
-uv run chat.py
+uv run chatmem.py
 ```
 
 ## How Memory Works
@@ -59,7 +59,7 @@ When you exit (Ctrl-C or /exit), the session:
 
 Next time you run with the same session ID:
 ```bash
-uv run chat.py --session-id my-project
+uv run chatmem.py --session-id my-project
 ```
 
 You'll see:
@@ -74,7 +74,7 @@ The AI remembers your previous conversation context!
 ### Basic Chat
 
 ```bash
-uv run chat.py
+uv run chatmem.py
 ```
 
 **First run:**
@@ -153,35 +153,19 @@ Supports:
 
 ```bash
 # Use default session
-uv run chat.py
+uv run chatmem.py
 
 # Use project-specific session
-uv run chat.py --session-id my-project
+uv run chatmem.py --session-id my-project
 
 # Use date-based session
-uv run chat.py --session-id $(date +%Y-%m-%d)
-```
-
-### Options
-
-```bash
-# Adjust creativity
-uv run chat.py --temperature 0.9
-
-# Use more context
-uv run chat.py --top-k 10
-
-# Stricter relevance
-uv run chat.py --score-threshold 0.3
-
-# All options
-uv run chat.py --help
+uv run chatmem.py --session-id $(date +%Y-%m-%d)
 ```
 
 ### Debug Mode
 
 ```bash
-OV_DEBUG=1 uv run chat.py
+OV_DEBUG=1 uv run chatmem.py
 ```
 
 ## Configuration
