@@ -158,18 +158,28 @@ class ChatREPL:
         Returns:
             True if should exit, False otherwise
         """
-        cmd = cmd.strip().lower()
+        cmd_lower = cmd.strip().lower()
 
-        if cmd in ["/exit", "/quit"]:
+        if cmd_lower in ["/exit", "/quit"]:
             console.print(
                 Panel("👋 Goodbye!", style="bold yellow", padding=(0, 1), width=PANEL_WIDTH)
             )
             return True
-        elif cmd == "/help":
+        elif cmd_lower == "/help":
             self._show_help()
-        elif cmd == "/clear":
+        elif cmd_lower == "/clear":
             console.clear()
             self._show_welcome()
+        elif cmd.strip().startswith("/time"):
+            # Extract question from command
+            question = cmd.strip()[5:].strip()  # Remove "/time" prefix
+
+            if not question:
+                console.print("Usage: /time <your question>", style="yellow")
+                console.print("Example: /time what is prompt engineering?", style="dim")
+                console.print()
+            else:
+                self.ask_question(question, show_timing=True)
         else:
             console.print(f"Unknown command: {cmd}", style="red")
             console.print("Type /help for available commands", style="dim")
