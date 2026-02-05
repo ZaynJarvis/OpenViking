@@ -83,7 +83,7 @@ class Recipe:
                     {
                         "uri": resource.uri,
                         "score": resource.score,
-                        "content": content[:1000],  # Limit content length for MVP
+                        "content": content,
                     }
                 )
                 # print(f"  {i + 1}. {resource.uri} (score: {resource.score:.4f})")
@@ -97,7 +97,7 @@ class Recipe:
                             {
                                 "uri": resource.uri,
                                 "score": resource.score,
-                                "content": f"[Directory Abstract] {abstract[:1000]}",
+                                "content": f"[Directory Abstract] {abstract}",
                             }
                         )
                         # print(f"  {i + 1}. {resource.uri} (score: {resource.score:.4f}) [directory]")
