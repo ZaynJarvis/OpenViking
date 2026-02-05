@@ -105,6 +105,50 @@ You: Can you give me more examples?
 - `Ctrl-C` - Save and exit gracefully
 - `Ctrl-D` - Exit
 
+### New Commands
+
+#### /time - Performance Timing
+
+Display performance metrics for your queries:
+
+```bash
+You: /time what is retrieval augmented generation?
+
+✅ Roger That
+...answer...
+
+📚 Sources (3 documents)
+...sources...
+
+⏱️  Performance
+┌─────────────────┬─────────┐
+│ Search          │  0.234s │
+│ LLM Generation  │  1.567s │
+│ Total           │  1.801s │
+└─────────────────┴─────────┘
+```
+
+#### /add_resource - Add Documents During Chat
+
+Add documents or URLs to your database without exiting:
+
+```bash
+You: /add_resource ~/Downloads/paper.pdf
+
+📂 Adding resource: /Users/you/Downloads/paper.pdf
+✓ Resource added
+⏳ Processing and indexing...
+✓ Processing complete!
+🎉 Resource is now searchable!
+
+You: what does the paper say about transformers?
+```
+
+Supports:
+- Local files: `/add_resource ~/docs/file.pdf`
+- URLs: `/add_resource https://example.com/doc.md`
+- Directories: `/add_resource ~/research/`
+
 ### Session Management
 
 ```bash
