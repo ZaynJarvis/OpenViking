@@ -187,7 +187,7 @@ class ChatREPL:
 
         return False
 
-    def ask_question(self, question: str) -> bool:
+    def ask_question(self, question: str, show_timing: bool = False) -> bool:
         """Ask a question and display of answer"""
 
         # Record user message to session
@@ -249,7 +249,32 @@ class ChatREPL:
                     sources_table.add_row(str(i), filename, score_text)
 
                 console.print(sources_table)
-            console.print()
+                console.print()
+
+            # Display timing panel if requested
+            if show_timing and "timings" in result:
+                from rich.table import Table
+
+                timings = result["timings"]
+
+                timing_table = Table(show_header=False, box=None, padding=(0, 2))
+                timing_table.add_column("Metric", style="cyan")
+                timing_table.add_column("Time", style="bold green", justify="right")
+
+                timing_table.add_row("Search", f"{timings['search_time']:.3f}s")
+                timing_table.add_row("LLM Generation", f"{timings['llm_time']:.3f}s")
+                timing_table.add_row("Total", f"{timings['total_time']:.3f}s")
+
+                console.print(
+                    Panel(
+                        timing_table,
+                        title="⏱️  Performance",
+                        style="bold blue",
+                        padding=(0, 1),
+                        width=PANEL_WIDTH,
+                    )
+                )
+                console.print()
 
             return True
 
