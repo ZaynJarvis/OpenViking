@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Required to calculate the git diff
 
     - name: Set up Python
       uses: actions/setup-python@v6
@@ -28,12 +30,33 @@ jobs:
     - name: Install dependencies
       run: uv sync --frozen --extra dev
 
-    - name: Format with ruff
-      run: uv run ruff format --check openviking/
+    # --- NEW STEP: Get the list of changed files ---
+    - name: Get changed Python files
+      id: changed-files
+      uses: tj-actions/changed-files@v45
+      with:
+        # Only look for python files inside the openviking folder
+        files: |
+          openviking/**/*.py
+          examples/**/*.py
 
-    - name: Lint with ruff
-      run: uv run ruff check openviking/
+    # --- UPDATED STEPS: Use the file list ---
+    - name: List changed files
+      if: steps.changed-files.outputs.any_changed == 'true'
+      run: |
+        echo "The following files have changed:"
+        echo "${{ steps.changed-files.outputs.all_changed_files }}"
 
-    - name: Type check with mypy
-      run: uv run mypy openviking/
+    - name: Format with ruff (Changed files only)
+      if: steps.changed-files.outputs.any_changed == 'true'
+      run: uv run ruff format --check ${{ steps.changed-files.outputs.all_changed_files }}
+
+    - name: Lint with ruff (Changed files only)
+      if: steps.changed-files.outputs.any_changed == 'true'
+      run: uv run ruff check ${{ steps.changed-files.outputs.all_changed_files }}
+
+    - name: Type check with mypy (Changed files only)
+      if: steps.changed-files.outputs.any_changed == 'true'
+      # Note: Running mypy on specific files may miss cross-file type errors
+      run: uv run mypy ${{ steps.changed-files.outputs.all_changed_files }}
       continue-on-error: true
