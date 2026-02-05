@@ -31,32 +31,26 @@ jobs:
       run: uv sync --frozen --extra dev
 
     # --- NEW STEP: Get the list of changed files ---
-    - name: Get changed Python files
-      id: changed-files
-      uses: tj-actions/changed-files@v45
-      with:
-        # Only look for python files inside the openviking folder
-        files: |
-          openviking/**/*.py
-          examples/**/*.py
+    - name: Get changed files
+      id: files
+      run: |
+        # Compare the PR head to the base branch
+        echo "changed_files=$(git diff --name-only origin/${{ github.base_ref }} HEAD | xargs)" >> $GITHUB_OUTPUT
 
     # --- UPDATED STEPS: Use the file list ---
-    - name: List changed files
-      if: steps.changed-files.outputs.any_changed == 'true'
-      run: |
-        echo "The following files have changed:"
-        echo "${{ steps.changed-files.outputs.all_changed_files }}"
+    - name: List files
+      run: echo "The changed files are ${{ steps.files.outputs.changed_files }}"
 
     - name: Format with ruff (Changed files only)
-      if: steps.changed-files.outputs.any_changed == 'true'
-      run: uv run ruff format --check ${{ steps.changed-files.outputs.all_changed_files }}
+      if: steps.files.outputs.changed_files != ''
+      run: uv run ruff format --check ${{ steps.files.outputs.changed_files }}  
 
     - name: Lint with ruff (Changed files only)
-      if: steps.changed-files.outputs.any_changed == 'true'
-      run: uv run ruff check ${{ steps.changed-files.outputs.all_changed_files }}
+      if: steps.files.outputs.changed_files != ''
+      run: uv run ruff check ${{ steps.files.outputs.changed_files }}
 
     - name: Type check with mypy (Changed files only)
-      if: steps.changed-files.outputs.any_changed == 'true'
+      if: steps.files.outputs.changed_files != ''
       # Note: Running mypy on specific files may miss cross-file type errors
-      run: uv run mypy ${{ steps.changed-files.outputs.all_changed_files }}
+      run: uv run mypy ${{ steps.files.outputs.changed_files }}
       continue-on-error: true
