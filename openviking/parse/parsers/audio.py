@@ -131,54 +131,82 @@ class AudioParser(BaseParser):
         return "\n\n".join(markdown_parts)
 
     def _extract_tags(self, audio) -> dict:
-        """Extract metadata tags from audio file."""
+        """Extract metadata tags from audio file.
+
+        Handles ID3 (MP3), MP4/M4A, and Vorbis/FLAC/OGG tag formats
+        via mutagen's format-specific tag keys.
+        """
         tags = {}
 
-        if hasattr(audio, "tags") and audio.tags:
-            tag_mapping = {
-                "TIT2": "Title",
-                "TPE1": "Artist",
-                "TALB": "Album",
-                "TCON": "Genre",
-                "TYER": "Year",
-                "TDRC": "Date",
-                "TRCK": "Track Number",
-                "COMM": "Comments",
-                "TPE2": "Album Artist",
-                "TPUB": "Publisher",
-                "TCOM": "Composer",
-            }
+        if not (hasattr(audio, "tags") and audio.tags):
+            return tags
 
-            for key, label in tag_mapping.items():
-                if key in audio.tags:
-                    try:
-                        value = str(audio.tags[key])
-                        if value:
-                            tags[label] = value
-                    except Exception:
-                        pass
+        # ID3 tags (MP3)
+        id3_mapping = {
+            "TIT2": "Title",
+            "TPE1": "Artist",
+            "TALB": "Album",
+            "TCON": "Genre",
+            "TYER": "Year",
+            "TDRC": "Date",
+            "TRCK": "Track Number",
+            "COMM": "Comments",
+            "TPE2": "Album Artist",
+            "TPUB": "Publisher",
+            "TCOM": "Composer",
+        }
 
-            # For MP4/M4A files
-            if hasattr(audio.tags, "_DictProxy__dict"):
-                mp4_mapping = {
-                    "\xa9nam": "Title",
-                    "\xa9ART": "Artist",
-                    "\xa9alb": "Album",
-                    "\xa9gen": "Genre",
-                    "\xa9day": "Year",
-                    "trkn": "Track Number",
-                }
-                for key, label in mp4_mapping.items():
-                    if key in audio.tags:
-                        try:
-                            value = (
-                                audio.tags[key][0]
-                                if isinstance(audio.tags[key], list)
-                                else audio.tags[key]
-                            )
-                            tags[label] = str(value)
-                        except Exception:
-                            pass
+        for key, label in id3_mapping.items():
+            if key in audio.tags:
+                try:
+                    value = str(audio.tags[key])
+                    if value:
+                        tags[label] = value
+                except Exception:
+                    pass
+
+        # MP4/M4A tags
+        mp4_mapping = {
+            "\xa9nam": "Title",
+            "\xa9ART": "Artist",
+            "\xa9alb": "Album",
+            "\xa9gen": "Genre",
+            "\xa9day": "Year",
+            "trkn": "Track Number",
+            "aART": "Album Artist",
+            "\xa9wrt": "Composer",
+        }
+        for key, label in mp4_mapping.items():
+            if label not in tags and key in audio.tags:
+                try:
+                    value = (
+                        audio.tags[key][0] if isinstance(audio.tags[key], list) else audio.tags[key]
+                    )
+                    tags[label] = str(value)
+                except Exception:
+                    pass
+
+        # Vorbis comments (FLAC, OGG) — keys are case-insensitive strings
+        vorbis_mapping = {
+            "title": "Title",
+            "artist": "Artist",
+            "album": "Album",
+            "genre": "Genre",
+            "date": "Date",
+            "tracknumber": "Track Number",
+            "albumartist": "Album Artist",
+            "composer": "Composer",
+            "comment": "Comments",
+        }
+        for key, label in vorbis_mapping.items():
+            if label not in tags and key in audio.tags:
+                try:
+                    value = audio.tags[key]
+                    if isinstance(value, list):
+                        value = value[0]
+                    tags[label] = str(value)
+                except Exception:
+                    pass
 
         return tags
 

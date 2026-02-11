@@ -217,9 +217,9 @@ class ZipParser(BaseParser):
 
             # Add prefix for directories vs files
             if item.endswith("/"):
-                prefix = "📁 "
+                prefix = "[dir] "
             else:
-                prefix = "📄 "
+                prefix = ""
 
             lines.append(f"{indent}{prefix}{name}")
 

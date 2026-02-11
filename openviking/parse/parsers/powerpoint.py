@@ -103,21 +103,25 @@ class PowerPointParser(BaseParser):
 
     def _extract_slide_title(self, slide) -> str:
         """Extract title from a slide."""
+        from pptx.enum.shapes import PP_PLACEHOLDER
+
         for shape in slide.shapes:
             if shape.is_placeholder:
-                placeholder_format = shape.placeholder_format
-                if placeholder_format.type == 1:  # TITLE
+                ph_type = shape.placeholder_format.type
+                if ph_type in (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE):
                     return shape.text.strip()
         return ""
 
     def _extract_slide_content(self, slide) -> str:
         """Extract content from slide shapes."""
+        from pptx.enum.shapes import PP_PLACEHOLDER
+
         content_parts = []
 
         for shape in slide.shapes:
             if shape.is_placeholder:
-                placeholder_format = shape.placeholder_format
-                if placeholder_format.type == 1:  # TITLE
+                ph_type = shape.placeholder_format.type
+                if ph_type in (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE):
                     continue
 
             if hasattr(shape, "text") and shape.text.strip():

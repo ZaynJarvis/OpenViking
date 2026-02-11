@@ -68,25 +68,42 @@ class WordParser(BaseParser):
         return result
 
     def _convert_to_markdown(self, path: Path, docx) -> str:
-        """Convert Word document to Markdown string."""
+        """Convert Word document to Markdown string.
+
+        Iterates the document body in order so that tables appear in their
+        original position rather than being appended at the end.
+        """
         doc = docx.Document(path)
         markdown_parts = []
 
-        for paragraph in doc.paragraphs:
-            if not paragraph.text.strip():
-                continue
+        # Map XML table elements to python-docx Table objects for O(1) lookup
+        table_by_element = {table._tbl: table for table in doc.tables}
 
-            style_name = paragraph.style.name if paragraph.style else "Normal"
+        # Walk the document body in order to preserve table positions
+        from docx.oxml.ns import qn
 
-            if style_name.startswith("Heading"):
-                level = self._extract_heading_level(style_name)
-                markdown_parts.append(f"{'#' * level} {paragraph.text}")
-            else:
-                text = self._convert_formatted_text(paragraph)
-                markdown_parts.append(text)
+        for child in doc.element.body:
+            if child.tag == qn("w:p"):
+                # It's a paragraph
+                from docx.text.paragraph import Paragraph
 
-        for table in doc.tables:
-            markdown_parts.append(self._convert_table(table))
+                paragraph = Paragraph(child, doc)
+                if not paragraph.text.strip():
+                    continue
+
+                style_name = paragraph.style.name if paragraph.style else "Normal"
+
+                if style_name.startswith("Heading"):
+                    level = self._extract_heading_level(style_name)
+                    markdown_parts.append(f"{'#' * level} {paragraph.text}")
+                else:
+                    text = self._convert_formatted_text(paragraph)
+                    markdown_parts.append(text)
+
+            elif child.tag == qn("w:tbl"):
+                # It's a table
+                if child in table_by_element:
+                    markdown_parts.append(self._convert_table(table_by_element[child]))
 
         return "\n\n".join(markdown_parts)
 
