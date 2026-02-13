@@ -1,11 +1,11 @@
 use crate::client::HttpClient;
 use crate::error::Result;
-use crate::output::{output_success, OutputFormat};
+use crate::output::OutputFormat;
 
 pub async fn read(
     client: &HttpClient,
     uri: &str,
-    output_format: OutputFormat,
+    _output_format: OutputFormat,
 ) -> Result<()> {
     let content = client.read(uri).await?;
     println!("{}", content);
@@ -15,7 +15,7 @@ pub async fn read(
 pub async fn abstract_content(
     client: &HttpClient,
     uri: &str,
-    output_format: OutputFormat,
+    _output_format: OutputFormat,
 ) -> Result<()> {
     let content = client.abstract_content(uri).await?;
     println!("{}", content);
@@ -25,7 +25,7 @@ pub async fn abstract_content(
 pub async fn overview(
     client: &HttpClient,
     uri: &str,
-    output_format: OutputFormat,
+    _output_format: OutputFormat,
 ) -> Result<()> {
     let content = client.overview(uri).await?;
     println!("{}", content);

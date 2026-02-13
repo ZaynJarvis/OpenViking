@@ -1,5 +1,5 @@
 use crate::client::HttpClient;
-use crate::output::{output_error, output_success, OutputFormat};
+use crate::output::OutputFormat;
 use crate::error::Result;
 
 pub async fn add_resource(
