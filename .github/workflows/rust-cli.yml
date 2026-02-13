@@ -1,12 +1,19 @@
-name: Build OpenViking CLI
+name: Rust CLI Build
 
 on:
+  workflow_call:
   push:
     branches: [ main, feat/rust-cli ]
+    paths: 
+      - 'crates/**'
+      - 'Cargo.toml'
+      - '.github/workflows/rust-cli.yml'
   pull_request:
     branches: [ main ]
-  release:
-    types: [ published ]
+    paths: 
+      - 'crates/**'
+      - 'Cargo.toml'
+      - '.github/workflows/rust-cli.yml'
 
 jobs:
   build:
@@ -45,6 +52,8 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y gcc-aarch64-linux-gnu
+      env:
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
     - name: Cache dependencies
       uses: actions/cache@v3
@@ -58,6 +67,8 @@ jobs:
     - name: Build
       run: |
         cargo build --release --target ${{ matrix.target }} -p openviking-cli
+      env:
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         
     - name: Prepare artifacts
       shell: bash
@@ -69,7 +80,13 @@ jobs:
           cp target/${{ matrix.target }}/release/openviking-cli artifacts/${{ matrix.artifact_name }}
         fi
         cd artifacts
-        sha256sum ${{ matrix.artifact_name }} > ${{ matrix.artifact_name }}.sha256
+        if command -v sha256sum >/dev/null; then
+          sha256sum ${{ matrix.artifact_name }} > ${{ matrix.artifact_name }}.sha256
+        elif command -v shasum >/dev/null; then
+          shasum -a 256 ${{ matrix.artifact_name }} > ${{ matrix.artifact_name }}.sha256
+        else
+          echo "No checksum utility found" > ${{ matrix.artifact_name }}.sha256
+        fi
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v3
