@@ -5,7 +5,7 @@ set -e
 # Usage: curl -sSL https://raw.githubusercontent.com/volcengine/OpenViking/main/install.sh | bash
 
 REPO="volcengine/OpenViking"
-BINARY_NAME="openviking-cli"
+BINARY_NAME="ov"
 INSTALL_DIR="/usr/local/bin"
 
 # Colors for output
@@ -50,6 +50,9 @@ detect_platform() {
     ARTIFACT_NAME="${BINARY_NAME}-${OS}-${ARCH}"
     if [[ "$OS" == "windows" ]]; then
         ARTIFACT_NAME="${ARTIFACT_NAME}.exe"
+        ARCHIVE_EXT="zip"
+    else
+        ARCHIVE_EXT="tar.gz"
     fi
 }
 
@@ -64,37 +67,54 @@ get_latest_release() {
     fi
     
     info "Latest version: $TAG_NAME"
-    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG_NAME}/${ARTIFACT_NAME}"
-    CHECKSUM_URL="https://github.com/${REPO}/releases/download/${TAG_NAME}/${ARTIFACT_NAME}.sha256"
+    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG_NAME}/${ARTIFACT_NAME}.${ARCHIVE_EXT}"
+    CHECKSUM_URL="https://github.com/${REPO}/releases/download/${TAG_NAME}/${ARTIFACT_NAME}.${ARCHIVE_EXT}.sha256"
 }
 
-# Download binary
+# Download and extract binary
 download_binary() {
-    info "Downloading $ARTIFACT_NAME..."
+    info "Downloading ${ARTIFACT_NAME}.${ARCHIVE_EXT}..."
     TEMP_DIR=$(mktemp -d)
-    TEMP_FILE="$TEMP_DIR/$ARTIFACT_NAME"
-    CHECKSUM_FILE="$TEMP_DIR/$ARTIFACT_NAME.sha256"
-    
-    # Download binary
-    if ! curl -sSL -o "$TEMP_FILE" "$DOWNLOAD_URL"; then
-        error "Failed to download binary from $DOWNLOAD_URL"
+    ARCHIVE_FILE="$TEMP_DIR/${ARTIFACT_NAME}.${ARCHIVE_EXT}"
+    CHECKSUM_FILE="$TEMP_DIR/${ARTIFACT_NAME}.${ARCHIVE_EXT}.sha256"
+
+    # Download archive
+    if ! curl -sSL -o "$ARCHIVE_FILE" "$DOWNLOAD_URL"; then
+        error "Failed to download from $DOWNLOAD_URL"
     fi
-    
+
     # Download checksum
     if ! curl -sSL -o "$CHECKSUM_FILE" "$CHECKSUM_URL"; then
         warn "Could not download checksum file, skipping verification"
     else
         info "Verifying checksum..."
         if command -v sha256sum >/dev/null; then
-            (cd "$TEMP_DIR" && sha256sum -c "$ARTIFACT_NAME.sha256") || error "Checksum verification failed"
+            (cd "$TEMP_DIR" && sha256sum -c "${ARTIFACT_NAME}.${ARCHIVE_EXT}.sha256") || error "Checksum verification failed"
         elif command -v shasum >/dev/null; then
-            (cd "$TEMP_DIR" && shasum -a 256 -c "$ARTIFACT_NAME.sha256") || error "Checksum verification failed"
+            (cd "$TEMP_DIR" && shasum -a 256 -c "${ARTIFACT_NAME}.${ARCHIVE_EXT}.sha256") || error "Checksum verification failed"
         else
             warn "No checksum utility found, skipping verification"
         fi
     fi
-    
-    info "Download successful"
+
+    # Extract archive
+    info "Extracting archive..."
+    if [[ "$ARCHIVE_EXT" == "tar.gz" ]]; then
+        tar -xzf "$ARCHIVE_FILE" -C "$TEMP_DIR" || error "Failed to extract archive"
+    elif [[ "$ARCHIVE_EXT" == "zip" ]]; then
+        unzip -q "$ARCHIVE_FILE" -d "$TEMP_DIR" || error "Failed to extract archive"
+    fi
+
+    TEMP_FILE="$TEMP_DIR/$BINARY_NAME"
+    if [[ "$OS" == "windows" ]]; then
+        TEMP_FILE="${TEMP_FILE}.exe"
+    fi
+
+    if [[ ! -f "$TEMP_FILE" ]]; then
+        error "Binary not found after extraction: $TEMP_FILE"
+    fi
+
+    info "Download and extraction successful"
 }
 
 # Install binary

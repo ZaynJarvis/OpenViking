@@ -6,6 +6,10 @@ authors = ["OpenViking Contributors"]
 description = "CLI client for OpenViking"
 license = "MIT"
 
+[[bin]]
+name = "ov"
+path = "src/main.rs"
+
 [dependencies]
 clap = { version = "4.5", features = ["derive", "env"] }
 reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls"], default-features = false }
