@@ -1,3 +1,4 @@
+<!-- TEST RELEASE BUILD - Branch: test-release-actions -->
 <div align="center">
 
 <picture>
