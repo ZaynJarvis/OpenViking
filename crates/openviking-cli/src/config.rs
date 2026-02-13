@@ -5,10 +5,20 @@ use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(default = "default_url")]
     pub url: String,
     pub api_key: Option<String>,
     pub user: Option<String>,
+    #[serde(default = "default_output_format")]
     pub output: String,
+}
+
+fn default_url() -> String {
+    "http://localhost:1933".to_string()
+}
+
+fn default_output_format() -> String {
+    "table".to_string()
 }
 
 impl Default for Config {
