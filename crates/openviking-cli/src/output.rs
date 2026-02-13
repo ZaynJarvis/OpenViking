@@ -169,8 +169,17 @@ fn format_value(v: &serde_json::Value) -> String {
 
 fn truncate_string(s: &str) -> String {
     const MAX_LEN: usize = 80;
-    if s.len() > MAX_LEN {
-        format!("{}...", &s[..MAX_LEN - 3])
+    const ELLIPSIS: &str = "...";
+
+    // Use character count, not byte length, for proper Unicode handling
+    let char_count = s.chars().count();
+    let ellipsis_len = ELLIPSIS.chars().count();
+
+    if char_count > MAX_LEN {
+        // Take characters up to (MAX_LEN - ellipsis_len) to make room for ellipsis
+        // Using chars() ensures we respect Unicode character boundaries
+        let truncated: String = s.chars().take(MAX_LEN - ellipsis_len).collect();
+        format!("{}{}", truncated, ELLIPSIS)
     } else {
         s.to_string()
     }
