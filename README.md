@@ -65,8 +65,37 @@ Before starting with OpenViking, please ensure your environment meets the follow
 
 ### 1. Installation
 
+#### Python Package
+
 ```bash
 pip install openviking
+```
+
+#### Rust CLI (Recommended for Better Performance)
+
+[![Build Status](https://github.com/volcengine/OpenViking/actions/workflows/build.yml/badge.svg)](https://github.com/volcengine/OpenViking/actions/workflows/build.yml)
+
+The Rust CLI provides significantly faster startup times (~5ms vs ~200-500ms for Python):
+
+**Quick Install (Linux/macOS):**
+```bash
+curl -sSL https://raw.githubusercontent.com/volcengine/OpenViking/main/install.sh | bash
+```
+
+**Manual Installation:**
+1. Download the latest binary for your platform from [GitHub Releases](https://github.com/volcengine/OpenViking/releases)
+2. Extract and place in your PATH
+
+**Supported Platforms:**
+- Linux (x86_64, ARM64)
+- macOS (Intel, Apple Silicon)  
+- Windows (x86_64)
+
+**Build from Source:**
+```bash
+git clone https://github.com/volcengine/OpenViking.git
+cd OpenViking
+cargo build --release -p openviking-cli
 ```
 
 ### 2. Model Preparation
