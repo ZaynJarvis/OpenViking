@@ -129,15 +129,17 @@ impl HttpClient {
 
         // Handle API errors (status == success but body has error)
         if let Some(error) = json.get("error") {
-            let code = error
-                .get("code")
-                .and_then(|c| c.as_str())
-                .unwrap_or("UNKNOWN");
-            let message = error
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("Unknown error");
-            return Err(Error::Api(format!("[{}] {}", code, message)));
+            if !error.is_null() {
+                let code = error
+                    .get("code")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("UNKNOWN");
+                let message = error
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("Unknown error");
+                return Err(Error::Api(format!("[{}] {}", code, message)));
+            }
         }
 
         // Extract result from wrapped response or use the whole response
