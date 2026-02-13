@@ -1,6 +1,5 @@
 use serde::Serialize;
 use serde_json::json;
-use tabled::{Table, Tabled};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OutputFormat {
@@ -25,6 +24,7 @@ pub fn output_success<T: Serialize>(result: T, format: OutputFormat, json_output
     }
 }
 
+#[allow(dead_code)]
 pub fn output_error(code: &str, message: &str, format: OutputFormat, json_output: bool) {
     if json_output || matches!(format, OutputFormat::Json) {
         eprintln!(
@@ -174,22 +174,4 @@ fn truncate_string(s: &str) -> String {
     } else {
         s.to_string()
     }
-}
-
-#[derive(Tabled)]
-struct TableRow {
-    #[tabled(rename = "Key")]
-    key: String,
-    #[tabled(rename = "Value")]
-    value: String,
-}
-
-pub fn print_key_value_table(data: std::collections::HashMap<String, String>) {
-    let rows: Vec<TableRow> = data
-        .into_iter()
-        .map(|(k, v)| TableRow { key: k, value: v })
-        .collect();
-    
-    let table = Table::new(rows);
-    println!("{}", table);
 }
