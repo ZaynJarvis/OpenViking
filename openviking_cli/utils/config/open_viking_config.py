@@ -16,6 +16,7 @@ from .config_loader import (
 )
 from .embedding_config import EmbeddingConfig
 from .parser_config import (
+    AudioConfig,
     CodeConfig,
     HTMLConfig,
     ImageConfig,
@@ -63,6 +64,10 @@ class OpenVikingConfig(BaseModel):
 
     image: ImageConfig = Field(
         default_factory=lambda: ImageConfig(), description="Image parsing configuration"
+    )
+
+    audio: AudioConfig = Field(
+        default_factory=lambda: AudioConfig(), description="Audio parsing configuration"
     )
 
     video: VideoConfig = Field(
