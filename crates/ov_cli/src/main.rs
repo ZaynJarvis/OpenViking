@@ -3,6 +3,7 @@ mod commands;
 mod config;
 mod error;
 mod output;
+mod tui;
 
 use clap::{Parser, Subcommand};
 use config::Config;
@@ -284,6 +285,12 @@ enum Commands {
         /// or JSON array of such objects for multiple messages.
         content: String,
     },
+    /// Interactive TUI file explorer
+    Tui {
+        /// Viking URI to start browsing (default: viking://)
+        #[arg(default_value = "viking://")]
+        uri: String,
+    },
     /// Configuration management
     Config {
         #[command(subcommand)]
@@ -430,6 +437,9 @@ async fn main() {
         }
         Commands::AddMemory { content } => {
             handle_add_memory(content, ctx).await
+        }
+        Commands::Tui { uri } => {
+            handle_tui(uri, ctx).await
         }
         Commands::Config { action } => handle_config(action, ctx).await,
         Commands::Version => {
@@ -715,4 +725,9 @@ async fn handle_health(ctx: CliContext) -> Result<()> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+async fn handle_tui(uri: String, ctx: CliContext) -> Result<()> {
+    let client = ctx.get_client();
+    tui::run_tui(client, &uri).await
 }
