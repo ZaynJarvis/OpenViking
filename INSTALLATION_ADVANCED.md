@@ -200,7 +200,7 @@ export OPENVIKING_CLI_CONFIG_FILE=~/.openviking/ovcli.conf
 
 ### Using pip (not recommended)
 
-**Note:** uv is the recommended and only supported installation method. pip installation is not officially supported and may not work correctly. The following is provided for reference only:
+**Note:** The quick start guide uses uv for simplicity. pip works fine too:
 
 ```bash
 pip install openviking
