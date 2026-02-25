@@ -183,8 +183,12 @@ class AsyncHTTPClient(BaseClient):
 
     # ============= Internal Helpers =============
 
-    def _handle_response(self, response: httpx.Response) -> Any:
-        """Handle HTTP response and extract result or raise exception."""
+    def _handle_response(self, response: httpx.Response) -> tuple[Any, Optional[Dict[str, Any]]]:
+        """Handle HTTP response and extract result and usage or raise exception.
+
+        Returns:
+            Tuple of (result, usage) where usage is an optional dict with VLM usage info
+        """
         try:
             data = response.json()
         except Exception:
@@ -193,7 +197,7 @@ class AsyncHTTPClient(BaseClient):
                     f"HTTP {response.status_code}: {response.text or 'empty response'}",
                     code="INTERNAL",
                 )
-            return None
+            return None, None
         if data.get("status") == "error":
             self._raise_exception(data.get("error", {}))
         if not response.is_success:
@@ -201,7 +205,7 @@ class AsyncHTTPClient(BaseClient):
                 data.get("detail", f"HTTP {response.status_code}"),
                 code="UNKNOWN",
             )
-        return data.get("result")
+        return data.get("result"), data.get("usage")
 
     def _raise_exception(self, error: Dict[str, Any]) -> None:
         """Raise appropriate exception based on error code."""
@@ -262,7 +266,7 @@ class AsyncHTTPClient(BaseClient):
                 "/api/v1/resources/temp_upload",
                 files=files,
             )
-        result = self._handle_response(response)
+        result, _ = self._handle_response(response)
         return result.get("temp_path", "")
 
     # ============= Resource Management =============
@@ -275,7 +279,7 @@ class AsyncHTTPClient(BaseClient):
         instruction: str = "",
         wait: bool = False,
         timeout: Optional[float] = None,
-    ) -> Dict[str, Any]:
+    ) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
         """Add resource to OpenViking."""
         request_data = {
             "target": target,
@@ -307,7 +311,7 @@ class AsyncHTTPClient(BaseClient):
         data: Any,
         wait: bool = False,
         timeout: Optional[float] = None,
-    ) -> Dict[str, Any]:
+    ) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
         """Add skill to OpenViking."""
         response = await self._http.post(
             "/api/v1/skills",
@@ -325,7 +329,8 @@ class AsyncHTTPClient(BaseClient):
             "/api/v1/system/wait",
             json={"timeout": timeout},
         )
-        return self._handle_response(response)
+        result, _ = self._handle_response(response)
+        return result
 
     # ============= File System =============
 
@@ -584,7 +589,9 @@ class AsyncHTTPClient(BaseClient):
         response = await self._http.delete(f"/api/v1/sessions/{session_id}")
         self._handle_response(response)
 
-    async def commit_session(self, session_id: str) -> Dict[str, Any]:
+    async def commit_session(
+        self, session_id: str
+    ) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
         """Commit a session (archive and extract memories)."""
         response = await self._http.post(f"/api/v1/sessions/{session_id}/commit")
         return self._handle_response(response)
