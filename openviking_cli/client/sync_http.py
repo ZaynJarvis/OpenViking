@@ -89,8 +89,12 @@ class SyncHTTPClient:
         """
         return run_async(self._async_client.add_message(session_id, role, content, parts))
 
-    def commit_session(self, session_id: str) -> Dict[str, Any]:
-        """Commit a session (archive and extract memories)."""
+    def commit_session(self, session_id: str) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        """Commit a session (archive and extract memories).
+
+        Returns:
+            Tuple of (result, usage) where usage contains VLM token info
+        """
         return run_async(self._async_client.commit_session(session_id))
 
     # ============= Resource =============
@@ -103,7 +107,7 @@ class SyncHTTPClient:
         instruction: str = "",
         wait: bool = False,
         timeout: Optional[float] = None,
-    ) -> Dict[str, Any]:
+    ) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
         """Add resource to OpenViking."""
         return run_async(
             self._async_client.add_resource(path, target, reason, instruction, wait, timeout)
@@ -114,7 +118,7 @@ class SyncHTTPClient:
         data: Any,
         wait: bool = False,
         timeout: Optional[float] = None,
-    ) -> Dict[str, Any]:
+    ) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
         """Add skill to OpenViking."""
         return run_async(self._async_client.add_skill(data, wait=wait, timeout=timeout))
 
