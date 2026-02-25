@@ -21,6 +21,7 @@ class CLIContext:
 
     compact: bool = True
     output_format: str = "table"
+    show_usage: bool = False
     _client: Optional["SyncHTTPClient"] = field(default=None, init=False, repr=False)
 
     def get_client_http_only(self) -> "SyncHTTPClient":

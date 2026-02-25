@@ -11,7 +11,8 @@ from openviking.message.part import TextPart, part_from_dict
 from openviking.server.auth import get_request_context
 from openviking.server.dependencies import get_service
 from openviking.server.identity import RequestContext
-from openviking.server.models import Response
+from openviking.server.models import Response, UsageInfo, VLMUsageInfo
+from openviking.utils.vlm_usage_context import get_request_vlm_usage, track_vlm_usage_async
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 
@@ -145,8 +146,23 @@ async def commit_session(
 ):
     """Commit a session (archive and extract memories)."""
     service = get_service()
-    result = await service.sessions.commit(session_id, _ctx)
-    return Response(status="ok", result=result)
+
+    async with track_vlm_usage_async():
+        result = await service.sessions.commit(session_id, _ctx)
+
+    # Get VLM usage for the request
+    vlm_usage = get_request_vlm_usage()
+    usage = None
+    if vlm_usage and vlm_usage.total_tokens > 0:
+        usage = UsageInfo(
+            vlm=VLMUsageInfo(
+                prompt_tokens=vlm_usage.prompt_tokens,
+                completion_tokens=vlm_usage.completion_tokens,
+                total_tokens=vlm_usage.total_tokens,
+            )
+        )
+
+    return Response(status="ok", result=result, usage=usage)
 
 
 @router.post("/{session_id}/extract")
@@ -156,8 +172,23 @@ async def extract_session(
 ):
     """Extract memories from a session."""
     service = get_service()
-    result = await service.sessions.extract(session_id, _ctx)
-    return Response(status="ok", result=_to_jsonable(result))
+
+    async with track_vlm_usage_async():
+        result = await service.sessions.extract(session_id, _ctx)
+
+    # Get VLM usage for the request
+    vlm_usage = get_request_vlm_usage()
+    usage = None
+    if vlm_usage and vlm_usage.total_tokens > 0:
+        usage = UsageInfo(
+            vlm=VLMUsageInfo(
+                prompt_tokens=vlm_usage.prompt_tokens,
+                completion_tokens=vlm_usage.completion_tokens,
+                total_tokens=vlm_usage.total_tokens,
+            )
+        )
+
+    return Response(status="ok", result=_to_jsonable(result), usage=usage)
 
 
 @router.post("/{session_id}/messages")

@@ -136,29 +136,80 @@ def _to_table(data: Any, compact: bool = True) -> Optional[str]:
     return None
 
 
-def output_success(ctx: CLIContext, result: Any) -> None:
-    """Print successful command result."""
+def format_vlm_usage(usage: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Format VLM token usage for display.
+
+    Args:
+        usage: Usage dictionary containing VLM token info
+
+    Returns:
+        Formatted string with token usage, or None if no usage info
+    """
+    if not usage:
+        return None
+
+    vlm_usage = usage.get("vlm")
+    if not vlm_usage:
+        return None
+
+    prompt_tokens = vlm_usage.get("prompt_tokens", 0)
+    completion_tokens = vlm_usage.get("completion_tokens", 0)
+    total_tokens = vlm_usage.get("total_tokens", 0)
+
+    if total_tokens == 0:
+        return None
+
+    return f"VLM Tokens: {total_tokens} (prompt={prompt_tokens}, completion={completion_tokens})"
+
+
+def output_success(ctx: CLIContext, result: Any, usage: Optional[Dict[str, Any]] = None) -> None:
+    """Print successful command result.
+
+    Args:
+        ctx: CLI context
+        result: Command result to display
+        usage: Optional usage info dict to display (when show_usage is enabled)
+    """
     serializable = _to_serializable(result)
 
     if ctx.output_format == "json" and ctx.compact:
-        typer.echo(json.dumps({"ok": True, "result": serializable}, ensure_ascii=False))
+        payload = {"ok": True, "result": serializable}
+        if usage and ctx.show_usage:
+            payload["usage"] = usage
+        typer.echo(json.dumps(payload, ensure_ascii=False))
         return
     if serializable is None:
         return
     if isinstance(serializable, str):
         typer.echo(serializable)
+        # Show usage after result if enabled
+        if ctx.show_usage and usage:
+            usage_str = format_vlm_usage(usage)
+            if usage_str:
+                typer.echo(f"\n{usage_str}")
         return
 
     if ctx.output_format == "table":
         table = _to_table(serializable, ctx.compact)
         if table is not None:
             typer.echo(table)
+            # Show usage after table if enabled
+            if ctx.show_usage and usage:
+                usage_str = format_vlm_usage(usage)
+                if usage_str:
+                    typer.echo(f"\n{usage_str}")
             return
 
     if ctx.compact:
         typer.echo(json.dumps(serializable, ensure_ascii=False))
     else:
         typer.echo(json.dumps(serializable, ensure_ascii=False, indent=2))
+
+    # Show usage after result if enabled
+    if ctx.show_usage and usage:
+        usage_str = format_vlm_usage(usage)
+        if usage_str:
+            typer.echo(f"\n{usage_str}")
 
 
 def output_error(

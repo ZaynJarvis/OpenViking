@@ -13,7 +13,8 @@ from pydantic import BaseModel
 from openviking.server.auth import get_request_context
 from openviking.server.dependencies import get_service
 from openviking.server.identity import RequestContext
-from openviking.server.models import Response
+from openviking.server.models import Response, UsageInfo, VLMUsageInfo
+from openviking.utils.vlm_usage_context import get_request_vlm_usage, track_vlm_usage_async
 from openviking_cli.utils.config.open_viking_config import get_openviking_config
 
 router = APIRouter(prefix="/api/v1", tags=["resources"])
@@ -89,16 +90,30 @@ async def add_resource(
     if request.temp_path:
         path = request.temp_path
 
-    result = await service.resources.add_resource(
-        path=path,
-        ctx=_ctx,
-        target=request.target,
-        reason=request.reason,
-        instruction=request.instruction,
-        wait=request.wait,
-        timeout=request.timeout,
-    )
-    return Response(status="ok", result=result)
+    async with track_vlm_usage_async():
+        result = await service.resources.add_resource(
+            path=path,
+            ctx=_ctx,
+            target=request.target,
+            reason=request.reason,
+            instruction=request.instruction,
+            wait=request.wait,
+            timeout=request.timeout,
+        )
+
+    # Get VLM usage for the request
+    vlm_usage = get_request_vlm_usage()
+    usage = None
+    if vlm_usage and vlm_usage.total_tokens > 0:
+        usage = UsageInfo(
+            vlm=VLMUsageInfo(
+                prompt_tokens=vlm_usage.prompt_tokens,
+                completion_tokens=vlm_usage.completion_tokens,
+                total_tokens=vlm_usage.total_tokens,
+            )
+        )
+
+    return Response(status="ok", result=result, usage=usage)
 
 
 @router.post("/skills")
@@ -108,10 +123,25 @@ async def add_skill(
 ):
     """Add skill to OpenViking."""
     service = get_service()
-    result = await service.resources.add_skill(
-        data=request.data,
-        ctx=_ctx,
-        wait=request.wait,
-        timeout=request.timeout,
-    )
-    return Response(status="ok", result=result)
+
+    async with track_vlm_usage_async():
+        result = await service.resources.add_skill(
+            data=request.data,
+            ctx=_ctx,
+            wait=request.wait,
+            timeout=request.timeout,
+        )
+
+    # Get VLM usage for the request
+    vlm_usage = get_request_vlm_usage()
+    usage = None
+    if vlm_usage and vlm_usage.total_tokens > 0:
+        usage = UsageInfo(
+            vlm=VLMUsageInfo(
+                prompt_tokens=vlm_usage.prompt_tokens,
+                completion_tokens=vlm_usage.completion_tokens,
+                total_tokens=vlm_usage.total_tokens,
+            )
+        )
+
+    return Response(status="ok", result=result, usage=usage)

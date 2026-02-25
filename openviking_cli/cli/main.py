@@ -42,6 +42,12 @@ def main(
     output_format: Optional[str] = typer.Option(
         None, "--output", "-o", help="Output format: table (default), json"
     ),
+    usage: bool = typer.Option(
+        False,
+        "--usage",
+        "-u",
+        help="Show VLM token usage information",
+    ),
     version: Optional[bool] = typer.Option(
         None,
         "--version",
@@ -63,7 +69,7 @@ def main(
         if output_format is None:
             output_format = "table"
 
-    ctx.obj = CLIContext(compact=compact, output_format=output_format)
+    ctx.obj = CLIContext(compact=compact, output_format=output_format, show_usage=usage)
 
 
 register_commands(app)

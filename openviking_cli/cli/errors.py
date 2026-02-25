@@ -75,7 +75,16 @@ def run(
     ctx: typer.Context,
     fn: Callable[[Any], Any],
 ) -> None:
-    """Execute a client command with boilerplate: context → execute → output."""
+    """Execute a client command with boilerplate: context → execute → output.
+
+    Handles both single results and (result, usage) tuples from client methods.
+    """
     cli_ctx = get_cli_context(ctx)
     result = execute_client_command(cli_ctx, fn)
-    output_success(cli_ctx, result)
+
+    # Handle tuple return (result, usage) from client methods
+    usage = None
+    if isinstance(result, tuple) and len(result) == 2:
+        result, usage = result
+
+    output_success(cli_ctx, result, usage)
