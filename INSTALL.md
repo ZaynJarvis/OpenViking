@@ -81,7 +81,7 @@ nohup openviking-server > ~/.openviking/server.log 2>&1 &
 
 Check it's running:
 ```bash
-curl http://localhost:11933/health
+curl http://localhost:1933/health
 # Should return: {"status": "ok"}
 ```
 
@@ -90,7 +90,7 @@ curl http://localhost:11933/health
 ```bash
 cat > ~/.openviking/ovcli.conf << 'EOF'
 {
-  "url": "http://localhost:11933"
+  "url": "http://localhost:1933"
 }
 EOF
 ```

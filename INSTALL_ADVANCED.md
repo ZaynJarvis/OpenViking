@@ -27,7 +27,7 @@ For the quick start guide, see **[INSTALL.md](./INSTALL.md)**.
 {
   "server": {
     "host": "0.0.0.0",
-    "port": 11933,
+    "port": 1933,
     "api_key": null,
     "cors_origins": ["*"]
   },
@@ -44,7 +44,7 @@ For the quick start guide, see **[INSTALL.md](./INSTALL.md)**.
       }
     },
     "agfs": {
-      "port": 11944,
+      "port": 1833,
       "log_level": "warn",
       "backend": "local",
       "timeout": 10,
@@ -169,10 +169,10 @@ For the quick start guide, see **[INSTALL.md](./INSTALL.md)**.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `server.host` | string | `"0.0.0.0"` | Server bind address |
-| `server.port` | int | `11933` | Server port |
+| `server.port` | int | `1933` | Server port |
 | `server.api_key` | string | `null` | API key for authentication |
 | `storage.workspace` | string | `"./data"` | Main data directory |
-| `storage.agfs.port` | int | `11944` | AGFS server port |
+| `storage.agfs.port` | int | `1833` | AGFS server port |
 | `storage.vectordb.backend` | string | `"local"` | Vector DB backend: local, volcengine |
 | `storage.agfs.backend` | string | `"local"` | AGFS backend: local, s3 |
 | `embedding.dense.provider` | string | `"volcengine"` | Embedding provider |
@@ -335,7 +335,7 @@ source $HOME/.cargo/env
 uv tool install openviking
 
 # Configure firewall (example for UFW)
-sudo ufw allow 11933/tcp
+sudo ufw allow 1933/tcp
 
 # Setup systemd service (see below)
 ```
@@ -379,7 +379,7 @@ sudo systemctl status openviking
 ```bash
 docker run -d \
   --name openviking \
-  -p 11933:11933 \
+  -p 1933:1933 \
   -v $(pwd)/data:/data \
   -v $(pwd)/ov.conf:/app/ov.conf \
   -e OPENVIKING_CONFIG_FILE=/app/ov.conf \
@@ -395,7 +395,7 @@ services:
   openviking:
     image: volcengine/openviking:latest
     ports:
-      - "11933:11933"
+      - "1933:1933"
     volumes:
       - ./data:/data
       - ./ov.conf:/app/ov.conf
@@ -425,7 +425,7 @@ spec:
       - name: openviking
         image: volcengine/openviking:latest
         ports:
-        - containerPort: 11933
+        - containerPort: 1933
         env:
         - name: OPENVIKING_CONFIG_FILE
           value: /app/ov.conf
@@ -451,8 +451,8 @@ spec:
   selector:
     app: openviking
   ports:
-  - port: 11933
-    targetPort: 11933
+  - port: 1933
+    targetPort: 1933
 ```
 
 ---
@@ -522,7 +522,7 @@ vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
 {
   "server": {
     "host": "0.0.0.0",
-    "port": 11933,
+    "port": 1933,
     "api_key": "your-secure-api-key",
     "cors_origins": ["https://yourdomain.com"]
   }
@@ -533,7 +533,7 @@ vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
 
 ```json
 {
-  "url": "http://localhost:11933",
+  "url": "http://localhost:1933",
   "api_key": "your-secure-api-key"
 }
 ```
@@ -551,7 +551,7 @@ server {
     ssl_certificate_key /path/to/key.pem;
 
     location / {
-        proxy_pass http://localhost:11933;
+        proxy_pass http://localhost:1933;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -610,16 +610,16 @@ For large deployments, adjust:
 
 ### Port Conflicts
 
-If port 11933 is taken:
+If port 1933 is taken, use alternative ports like 11933:
 
 ```json
 {
   "server": {
-    "port": 11934
+    "port": 11933
   },
   "storage": {
     "agfs": {
-      "port": 11945
+      "port": 11944
     }
   }
 }
@@ -631,7 +631,7 @@ If port 11933 is taken:
 2. Verify server binds to `0.0.0.0` (not `127.0.0.1`)
 3. Test with curl from remote machine:
    ```bash
-   curl http://server-ip:11933/health
+   curl http://server-ip:1933/health
    ```
 
 ---
