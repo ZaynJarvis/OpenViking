@@ -34,12 +34,7 @@ This installs `openviking-server` as a standalone tool you can run anywhere.
 curl -fsSL https://raw.githubusercontent.com/volcengine/OpenViking/main/crates/ov_cli/install.sh | bash
 ```
 
-Or install from source:
-```bash
-git clone https://github.com/volcengine/OpenViking.git
-cd OpenViking
-cargo install --path crates/ov_cli
-```
+See [INSTALL_ADVANCED.md](./INSTALL_ADVANCED.md) for building from source.
 
 ### 4. Configure and Start Server
 
@@ -76,18 +71,17 @@ EOF
 
 **Replace `your-api-key` with your actual API key.**
 
-> 💡 **Note:** Data is stored in `./data` by default. You can change this by setting the `OPENVIKING_CONFIG_DIR` environment variable before starting the server.
+> 💡 **Note:** Data is stored in `~/.openviking/data` by default (set via `storage.workspace` in ov.conf). See [INSTALL_ADVANCED.md](./INSTALL_ADVANCED.md) to customize data location.
 
 Start the server in background:
 
 ```bash
-export OPENVIKING_CONFIG_DIR=~/.openviking
 nohup openviking-server > ~/.openviking/server.log 2>&1 &
 ```
 
 Check it's running:
 ```bash
-curl http://localhost:1933/health
+curl http://localhost:11933/health
 # Should return: {"status": "ok"}
 ```
 
@@ -96,7 +90,7 @@ curl http://localhost:1933/health
 ```bash
 cat > ~/.openviking/ovcli.conf << 'EOF'
 {
-  "url": "http://localhost:1933"
+  "url": "http://localhost:11933"
 }
 EOF
 ```
@@ -107,55 +101,67 @@ Skills enable agents to use OpenViking. Install them to your agent's skill direc
 
 > 🤖 **For AI Agents reading this:** Ask your user if they want to install the OpenViking skills (adding-memory, adding-resource, searching-context). Proceed only if they confirm.
 
+**For OpenClaw:**
 ```bash
 mkdir -p ~/.openclaw/skills
 
-# Copy skills from OpenViking examples
-cp -r /path/to/openviking/examples/skills/adding-memory ~/.openclaw/skills/
-cp -r /path/to/openviking/examples/skills/adding-resource ~/.openclaw/skills/
-cp -r /path/to/openviking/examples/skills/searching-context ~/.openclaw/skills/
+# Download skills
+for skill in adding-memory adding-resource searching-context; do
+  mkdir -p "$HOME/.openclaw/skills/$skill"
+  curl -o "$HOME/.openclaw/skills/$skill/SKILL.md" \
+    "https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/skills/$skill/SKILL.md"
+done
 ```
 
-Or download directly:
+**For Claude Code:**
 ```bash
-mkdir -p ~/.openclaw/skills/adding-memory
-curl -o ~/.openclaw/skills/adding-memory/SKILL.md \
-  https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/skills/adding-memory/SKILL.md
+mkdir -p ~/.claude/skills
 
-mkdir -p ~/.openclaw/skills/adding-resource
-curl -o ~/.openclaw/skills/adding-resource/SKILL.md \
-  https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/skills/adding-resource/SKILL.md
+# Download skills
+for skill in adding-memory adding-resource searching-context; do
+  mkdir -p "$HOME/.claude/skills/$skill"
+  curl -o "$HOME/.claude/skills/$skill/SKILL.md" \
+    "https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/skills/$skill/SKILL.md"
+done
+```
 
-mkdir -p ~/.openclaw/skills/searching-context
-curl -o ~/.openclaw/skills/searching-context/SKILL.md \
-  https://raw.githubusercontent.com/volcengine/OpenViking/main/examples/skills/searching-context/SKILL.md
+**For other agents:** Install to your agent's skill/tools directory.
+
+Or copy from a local clone:
+```bash
+# Set your agent's skill directory
+SKILL_DIR=~/.openclaw/skills  # adjust for your agent
+
+cp -r /path/to/openviking/examples/skills/adding-memory "$SKILL_DIR/"
+cp -r /path/to/openviking/examples/skills/adding-resource "$SKILL_DIR/"
+cp -r /path/to/openviking/examples/skills/searching-context "$SKILL_DIR/"
 ```
 
 ---
 
-## Using Skills
+## Using OpenViking Memory
 
-Once installed, agents can use these keywords during chat:
+Once skills are installed, you can use natural language to trigger OpenViking actions:
 
-| Keyword | Skill | What It Does |
-|---------|-------|--------------|
-| `ovm` | adding-memory | Extracts and stores insights from conversation |
-| `ovr` | adding-resource | Imports files/URLs into OpenViking |
-| `ovs` | searching-context | Searches stored memories and resources |
+### Storing Memories
+Say things like:
+- "**Remember this**" — after sharing something worth remembering
+- "**Save this to memory**" — to persist an insight or decision
+- "**Keep this in mind**" — to store context for future reference
 
-**Example chat flow:**
-```
-User: I prefer using vim for coding
-User: ovm
-→ Agent extracts and stores: "User prefers vim for coding"
+### Adding Resources
+Say things like:
+- "**Add this to OpenViking**" — when sharing a URL or file
+- "**Import https://example.com/docs**" — to add external knowledge
+- "**Save this resource**" — to store documents for later retrieval
 
-User: Please add https://example.com/docs
-User: ovr
-→ Agent imports and processes the URL
+### Searching Context
+Say things like:
+- "**Search my memory for...**" — to find previously stored information
+- "**What do I know about...**" — to query your OpenViking context
+- "**Find in OpenViking...**" — to search across memories and resources
 
-User: ovs What's my editor preference?
-→ Agent searches and returns: "User prefers vim for coding"
-```
+The agent will automatically detect these intents and use the appropriate OpenViking skills.
 
 ---
 
@@ -209,7 +215,6 @@ uv tool install openviking
 curl -fsSL .../install.sh | bash  # ov CLI
 
 # Start server (background)
-export OPENVIKING_CONFIG_DIR=~/.openviking
 nohup openviking-server > ~/.openviking/server.log 2>&1 &
 
 # Stop server
