@@ -1,12 +1,6 @@
 [build-system]
-requires = [
-    "setuptools>=61.0",
-    "setuptools-scm>=8.0",
-    "pybind11>=2.13.0",
-    "cmake>=3.15",
-    "wheel",
-]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.8.0"]
+build-backend = "maturin"
 
 [project]
 name = "openviking"
@@ -27,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
 ]
 dependencies = [
     "pydantic>=2.0.0",
@@ -70,6 +65,7 @@ test = [
 dev = [
     "mypy>=1.0.0",
     "ruff>=0.1.0",
+    "maturin>=1.8.0",
 ]
 doc = [
     "sphinx>=7.0.0",
@@ -92,17 +88,13 @@ Issues = "https://github.com/volcengine/openviking/issues"
 openviking = "openviking_cli.cli.main:app"
 openviking-server = "openviking.server.bootstrap:main"
 
-[tool.setuptools_scm]
-write_to = "openviking/_version.py"
-local_scheme = "no-local-version"
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["openviking*"]
-exclude = ["tests*", "docs*", "examples*"]
-
-[tool.setuptools.package-data]
-openviking = ["prompts/templates/**/*.yaml"]
+[tool.maturin]
+python-source = "."
+manifest-path = "crates/ov_cli/Cargo.toml"
+bindings = "bin"
+strip = true
+# Include Python packages in the wheel
+include = ["openviking/**/*", "openviking_cli/**/*"]
 
 [tool.mypy]
 python_version = "3.10"
