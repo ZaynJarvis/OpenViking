@@ -62,6 +62,7 @@ cat > ~/.openviking/ov.conf << 'EOF'
     "api_base": "https://ark.cn-beijing.volces.com/api/v3"
   },
   "storage": {
+    "workspace": "/home/your-username/.openviking/data",
     "vectordb": { "backend": "local" },
     "agfs": { "backend": "local" }
   }
@@ -69,9 +70,9 @@ cat > ~/.openviking/ov.conf << 'EOF'
 EOF
 ```
 
-**Replace `your-api-key` with your actual API key.**
+**Replace `your-api-key` with your actual API key and `your-username` with your system username.**
 
-> 💡 **Note:** Data is stored in `~/.openviking/data` by default (set via `storage.workspace` in ov.conf). See [INSTALL_ADVANCED.md](./INSTALL_ADVANCED.md) to customize data location.
+> 💡 **Note:** Data is stored in the path set by `storage.workspace` in ov.conf. Use an absolute path (not `~`) since the server does not expand tilde. If omitted, defaults to `./data` relative to the working directory. See [INSTALL_ADVANCED.md](./INSTALL_ADVANCED.md) to customize data location.
 
 Start the server in background:
 
