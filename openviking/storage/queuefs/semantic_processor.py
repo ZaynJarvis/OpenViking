@@ -35,8 +35,9 @@ from openviking.parse.parsers.media.utils import (
 from openviking.prompts import render_prompt
 from openviking.pyagfs.exceptions import AGFSNotADirectoryError
 from openviking.server.identity import RequestContext, Role
+from openviking.service.task_tracker import get_task_tracker, run_tracked_operation
 from openviking.service.task_tracker_concurrency import run_to_completion
-from openviking.service.task_work_index import detach_task_context
+from openviking.service.task_work_index import detach_task_context, get_task_context
 from openviking.storage.abstract_overview import (
     AbstractOverviewWriteResult,
     body_for_preview,
@@ -344,11 +345,9 @@ class SemanticProcessor(DequeueHandlerBase):
         try:
             await work.reenqueue_after_error()
             self._merge_request_stats(msg.telemetry_id, requeue_count=1)
-            get_request_wait_tracker().record_semantic_requeue(msg.telemetry_id)
         except Exception as requeue_err:
             logger.error(f"Failed to re-enqueue semantic message: {requeue_err}")
             self._merge_request_stats(msg.telemetry_id, error_count=1)
-            get_request_wait_tracker().mark_semantic_failed(msg.telemetry_id, msg.id, str(error))
             await self._cleanup_local_artifact(msg)
             return ProcessResult.failed(str(error))
         return ProcessResult.requeued()
@@ -454,7 +453,55 @@ class SemanticProcessor(DequeueHandlerBase):
         lock: Optional[Dict[str, Any]] = None,
     ) -> ProcessResult:
         """Process dequeued SemanticMsg, recursively process all subdirectories."""
-        msg: Optional[SemanticMsg] = None
+        import json
+
+        if not data:
+            return ProcessResult.success()
+        try:
+            if "data" in data and isinstance(data["data"], str):
+                data = json.loads(data["data"])
+            msg = SemanticMsg.from_dict(data)
+        except Exception as exc:
+            logger.error("Invalid semantic message: %s", exc, exc_info=True)
+            return ProcessResult.failed(str(exc))
+
+        if msg.context_type != "skill" or get_task_context() is not None:
+            return await self._process_message(msg, lock)
+
+        # Parent refreshes and recovered taskless Skill messages need their own
+        # child-work collector so package ownership lasts through vector writes.
+        result: Optional[ProcessResult] = None
+
+        async def process() -> Dict[str, Any]:
+            nonlocal result
+            result = await self._process_message(msg, lock)
+            if result.error is not None:
+                context = get_task_context()
+                assert context is not None
+                await get_task_tracker().fail(
+                    context.task_id,
+                    result.error,
+                    account_id=msg.account_id,
+                    user_id=msg.user_id,
+                )
+            return {"uri": msg.uri, "outcome": result.outcome.value}
+
+        await run_tracked_operation(
+            "semantic_refresh",
+            account_id=msg.account_id,
+            user_id=msg.user_id,
+            resource_id=msg.uri,
+            operation=process,
+            wait=False,
+        )
+        assert result is not None
+        return result
+
+    async def _process_message(
+        self,
+        msg: SemanticMsg,
+        lock: Optional[Dict[str, Any]],
+    ) -> ProcessResult:
         collector = None
         work: Optional[SemanticMessageWork] = None
         execute_started_at: float | None = None
@@ -462,16 +509,6 @@ class SemanticProcessor(DequeueHandlerBase):
         execute_status = "ok"
         breaker = None
         try:
-            import json
-
-            if not data:
-                return ProcessResult.success()
-
-            if "data" in data and isinstance(data["data"], str):
-                data = json.loads(data["data"])
-
-            assert data is not None
-            msg = SemanticMsg.from_dict(data)
             breaker = self._account_breaker(msg.account_id)
             work = self._message_work(msg, lock)
             work.start()
@@ -480,8 +517,6 @@ class SemanticProcessor(DequeueHandlerBase):
                 queue_wait_ms = max((time.time() - msg.queue_enqueued_at) * 1000.0, 0.0)
             if VikingURI(msg.uri).parent is None:
                 logger.warning("Skipping semantic generation for root URI: %s", msg.uri)
-                if msg.telemetry_id and msg.id:
-                    get_request_wait_tracker().mark_semantic_done(msg.telemetry_id, msg.id)
                 await self._cleanup_local_artifact(msg)
                 return ProcessResult.success()
             if is_semantic_msg_stale(msg):
@@ -510,8 +545,6 @@ class SemanticProcessor(DequeueHandlerBase):
                         msg.coalesce_version,
                     )
                     await work.skip()
-                    if msg.telemetry_id and msg.id:
-                        get_request_wait_tracker().mark_semantic_done(msg.telemetry_id, msg.id)
                     await self._cleanup_local_artifact(msg)
                     return ProcessResult.success()
             # Circuit breaker: if API is known-broken, re-enqueue and wait
@@ -523,7 +556,6 @@ class SemanticProcessor(DequeueHandlerBase):
                 )
                 await work.reenqueue()
                 self._merge_request_stats(msg.telemetry_id, requeue_count=1)
-                get_request_wait_tracker().record_semantic_requeue(msg.telemetry_id)
                 return ProcessResult.requeued()
             collector = work.resolve_telemetry()
             telemetry_ctx = bind_telemetry(collector) if collector is not None else nullcontext()
@@ -768,11 +800,6 @@ class SemanticProcessor(DequeueHandlerBase):
                     if failure is not None:
                         return failure
                     is_request_coordinator = msg.wait_for_request_completion
-                    get_request_wait_tracker().mark_semantic_done(
-                        msg.telemetry_id,
-                        msg.id,
-                        processed_delta=0 if is_request_coordinator else 1,
-                    )
                     if not is_request_coordinator:
                         self._merge_request_stats(msg.telemetry_id, processed=1)
                     logger.info(f"Completed semantic generation for: {msg.uri}")
@@ -816,9 +843,6 @@ class SemanticProcessor(DequeueHandlerBase):
                 )
                 if msg is not None:
                     self._merge_request_stats(msg.telemetry_id, error_count=1)
-                    get_request_wait_tracker().mark_semantic_failed(
-                        msg.telemetry_id, msg.id, str(e)
-                    )
                 if msg is not None:
                     await self._cleanup_local_artifact(msg)
                 return ProcessResult.failed(str(e))
@@ -835,9 +859,6 @@ class SemanticProcessor(DequeueHandlerBase):
                     breaker.record_failure(e)
                 if msg is not None:
                     self._merge_request_stats(msg.telemetry_id, error_count=1)
-                    get_request_wait_tracker().mark_semantic_failed(
-                        msg.telemetry_id, msg.id, str(e)
-                    )
                 if msg is not None:
                     await self._cleanup_local_artifact(msg)
                 return ProcessResult.failed(str(e))
@@ -862,14 +883,6 @@ class SemanticProcessor(DequeueHandlerBase):
                 return ProcessResult.failed(str(e))
         finally:
             if msg is not None and execute_started_at is not None:
-                tracker = get_request_wait_tracker()
-                record_timing = getattr(tracker, "record_semantic_timing", None)
-                if callable(record_timing):
-                    record_timing(
-                        msg.telemetry_id,
-                        queue_wait_ms=queue_wait_ms,
-                        execute_ms=(time.perf_counter() - execute_started_at) * 1000.0,
-                    )
                 from openviking.metrics.datasources.resource import ResourceIngestionEventDataSource
 
                 ResourceIngestionEventDataSource.record_stage(
@@ -2007,7 +2020,6 @@ class SemanticProcessor(DequeueHandlerBase):
         return await _enqueue_embedding_message(
             embedding_queue,
             embedding_msg,
-            failure_message=f"Failed to enqueue vector scalar update for {uri}",
         )
 
     async def _vectorize_single_file(

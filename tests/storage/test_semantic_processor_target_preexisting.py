@@ -6,7 +6,6 @@ import pytest
 from openviking.storage.queuefs.semantic_msg import SemanticMsg
 from openviking.storage.queuefs.semantic_processor import SemanticProcessor
 from openviking.storage.viking_fs import SyncDiff
-from openviking.telemetry.request_wait_tracker import RequestWaitTracker
 
 
 def _processor(**kwargs):

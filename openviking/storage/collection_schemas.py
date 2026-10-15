@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 from openviking.core.context import ContextType, ResourceContentType
 from openviking.models.embedder.base import embed_compat
 from openviking.server.identity import RequestContext, Role
+from openviking.service.task_tracker import get_task_tracker
 from openviking.service.task_tracker_concurrency import run_to_completion
 from openviking.storage.acl import ACL_GRANT_FIELDS, ACL_MODE_FIELD, AclMode
 from openviking.storage.errors import (
@@ -769,9 +770,6 @@ class TextEmbeddingHandler(DequeueHandlerBase):
                                 await asyncio.sleep(wait)
                             await self._reenqueue_embedding_msg(embedding_msg)
                             self._merge_request_stats(embedding_msg.telemetry_id, requeue_count=1)
-                            get_request_wait_tracker().record_embedding_requeue(
-                                embedding_msg.telemetry_id
-                            )
                             return ProcessResult.requeued()
                         execute_status = "error"
                         request_failed_message = self._embedding_error_msg(
@@ -895,9 +893,7 @@ class TextEmbeddingHandler(DequeueHandlerBase):
                 # Write to vector database
                 try:
                     raw_upsert_options = inserted_data.pop("_upsert_options", {})
-                    extracted_memory_type = raw_upsert_options.pop(
-                        "extracted_memory_type", None
-                    )
+                    extracted_memory_type = raw_upsert_options.pop("extracted_memory_type", None)
                     # Reuse the actual vector-store ID when a semantic plan
                     # rebuilds an existing same-level record. Only genuinely new
                     # records derive an ID locally from (account, uri, level).
@@ -1047,14 +1043,6 @@ class TextEmbeddingHandler(DequeueHandlerBase):
             return ProcessResult.failed(error_msg)
         finally:
             if embedding_msg is not None and execute_started_at is not None:
-                tracker = get_request_wait_tracker()
-                record_timing = getattr(tracker, "record_embedding_timing", None)
-                if callable(record_timing):
-                    record_timing(
-                        embedding_msg.telemetry_id,
-                        queue_wait_ms=queue_wait_ms,
-                        execute_ms=(time.perf_counter() - execute_started_at) * 1000.0,
-                    )
                 from openviking.metrics.datasources.resource import ResourceIngestionEventDataSource
 
                 ResourceIngestionEventDataSource.record_stage(
@@ -1069,8 +1057,6 @@ class TextEmbeddingHandler(DequeueHandlerBase):
                     duration_seconds=(time.perf_counter() - execute_started_at),
                     account_id=embedding_msg.context_data.get("account_id"),
                 )
-            if embedding_msg is not None and request_failed_message is not None:
-                self._record_request_failure(embedding_msg, request_failed_message)
 
     async def on_cancelled(self, data: Optional[Dict[str, Any]]) -> ProcessResult:
         """Settle request-scoped waiting when a queued embedding is cancelled."""
@@ -1100,17 +1086,8 @@ class TextEmbeddingHandler(DequeueHandlerBase):
         *,
         vector_written: bool = False,
     ) -> None:
-        tracker = get_request_wait_tracker()
-        tracker.mark_embedding_done(
-            embedding_msg.telemetry_id,
-            embedding_msg.id,
-            vector_written=vector_written,
-        )
-
-    @staticmethod
-    def _record_request_failure(embedding_msg: EmbeddingMsg, message: str) -> None:
-        get_request_wait_tracker().mark_embedding_failed(
-            embedding_msg.telemetry_id,
-            embedding_msg.id,
-            message,
-        )
+        if vector_written and embedding_msg.task_id and embedding_msg._task_work_id:
+            get_task_tracker().record_context_count(
+                embedding_msg.task_id,
+                embedding_msg._task_work_id,
+            )
