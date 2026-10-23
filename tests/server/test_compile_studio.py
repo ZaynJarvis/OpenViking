@@ -98,7 +98,6 @@ async def test_compile_api_rejects_system_target_without_creating_task(service, 
     }
     assert after == before
 
-
 @pytest.mark.asyncio
 async def test_page_reads_past_200_and_isolates_owner():
     agfs = _FakeAgfs()

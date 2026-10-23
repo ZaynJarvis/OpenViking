@@ -110,7 +110,7 @@ def new_record(target_id: str, to: str) -> Dict[str, Any]:
         "compile_type": "compile",  # Compile category for this target.
         "conflicts_num": 0,  # Number of conflicting files under this target.
         "status": "active",
-        "deleted_at": None,  # Last deletion time; retained on reactivation to reject old tasks.
+        "deleted_at": None,  # Last deletion Unix time; retained for operation boundary checks.
         "from": [],
         "skill": None,
         "instruction": None,
@@ -324,6 +324,7 @@ class CompileStateStore:
     # ---------- state.json ----------
 
     async def get(self, account_id: str, to: str) -> Optional[Dict[str, Any]]:
+        """Read target state by URI without locking; return None when the state is missing."""
         record = await self.read_json(self._record_path(account_id, to))
         return _normalize_schedule(record) if record is not None else None
 
@@ -818,7 +819,7 @@ def new_compile_operation(task: Any, record: Dict[str, Any]) -> Dict[str, Any]:
         "created_at": task.created_at,
         "meta": {
             "task_id": task.task_id,
-            "target_deleted_at": request["compile"]["deleted_at"],  # Target lifecycle boundary.
+            "target_deleted_at": record["deleted_at"],  # Target lifecycle boundary.
             "trigger": trigger,
             "target_base": None,
             "target_head": None,
@@ -860,22 +861,16 @@ class CompileLifecycle:
         """
         control, runtime_args = split_control_args(payload.get("args"))
         task_payload = {key: value for key, value in payload.items() if key != "args"}
-        if scheduled_record is not None:
-            record = scheduled_record
-            target_id, trigger = record["id"], "scheduled"
-        else:
+        if scheduled_record is None:
             record = await self._save_submission(
                 payload, control, runtime_args, instruction_set, ctx
             )
-            target_id, trigger = record["id"], "manual"
             runtime_args = {**record["execution_context"]["args"], **runtime_args}
         if runtime_args:
             task_payload["args"] = runtime_args
         task_payload["compile"] = {
-            "target_id": target_id,
-            "deleted_at": record["deleted_at"],
             "mode": control.get("mode", "incremental"),
-            "trigger": trigger,
+            "trigger": "scheduled" if scheduled_record is not None else "manual",
         }
         return task_payload
 
@@ -979,7 +974,6 @@ class CompileLifecycle:
         self, task: Any, *, locked_record: Optional[Dict[str, Any]] = None
     ) -> None:
         """Save queued history and outputs under the target lock, reusing a caller-held record."""
-        meta = task.meta["request"]["compile"]
         if locked_record is None:
             try:
                 async with self._store.edit(task.account_id, task.meta["request"]["to"]) as record:
@@ -989,18 +983,15 @@ class CompileLifecycle:
             return
         if not self._task_is_current(locked_record, task):
             return
-        async with self._store.lock_operation(
-            task.account_id, meta["target_id"], task.task_id, "create"
-        ):
-            run = await self._store.get_operation(task.account_id, meta["target_id"], task.task_id)
+        target_id = locked_record["id"]
+        async with self._store.lock_operation(task.account_id, target_id, task.task_id, "create"):
+            run = await self._store.get_operation(task.account_id, target_id, task.task_id)
             self._record_identity(task, locked_record)
             if run is None:
-                await self._store.merge_outputs(
-                    task.account_id, meta["target_id"], task.task_id, []
-                )
+                await self._store.merge_outputs(task.account_id, target_id, task.task_id, [])
                 await self._store.put_operation(
                     task.account_id,
-                    meta["target_id"],
+                    target_id,
                     new_compile_operation(task, locked_record),
                 )
 
@@ -1008,17 +999,10 @@ class CompileLifecycle:
 
     @staticmethod
     def _task_is_current(record: Optional[Dict[str, Any]], task: Any) -> bool:
-        """Match the URI, stable identity and deletion boundary before accepting task effects."""
+        """Accept task effects only for an active target at the task's output URI."""
         request = task.meta["request"]
-        return (
-            record is not None
-            and record["status"] == "active"
-            and (
-                record["id"] == request["compile"]["target_id"]
-                and record["to"] == request["to"]
-                and record["deleted_at"] == request["compile"]["deleted_at"]
-            )
-        )
+        # shortcut: tasks use the current target at this URI; snapshot identity if isolation is needed.
+        return record is not None and record["status"] == "active" and record["to"] == request["to"]
 
     @asynccontextmanager
     async def _locked_output(self, to: str, ctx: RequestContext) -> AsyncIterator[Any]:
@@ -1038,17 +1022,29 @@ class CompileLifecycle:
             await self._fs._async_agfs.pathlock_release(lease)
 
     async def on_start(self, task: Any) -> Any:
-        """Claim the target across instances, then snapshot and plan once."""
+        """Poll missing target state every five seconds for up to 30, then claim and plan."""
         meta = task.meta["request"].get("compile")
         if meta is None:
             return "proceed"
-        account_id, target_id = task.account_id, meta["target_id"]
+        account_id = task.account_id
+        to = task.meta["request"]["to"]
+        deadline = time.monotonic() + 30.0
+        while await self._store.get(account_id, to) is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return ExternalTaskSnapshot(
+                    status="failed",
+                    error_code="COMPILE_TARGET_STATE_TIMEOUT",
+                    error_message=f"Compile target state is unavailable after 30 seconds: {to}",
+                )
+            await asyncio.sleep(min(5.0, remaining))
         try:
-            async with self._store.edit(account_id, task.meta["request"]["to"]) as record:
+            async with self._store.edit(account_id, to) as record:
                 if not self._task_is_current(record, task):
                     return ExternalTaskSnapshot(
                         status="cancelled", error_message="Compile target was deleted"
                     )
+                target_id = record["id"]
                 run = await self._store.get_operation(account_id, target_id, task.task_id)
                 if run and run["status"] in TERMINAL and run["finished_at"] is not None:
                     # Replayed completions must not claim the target and restore an older baseline.
@@ -1158,7 +1154,7 @@ class CompileLifecycle:
             )
             if mode == "incremental" and not run_meta["changed_roots"] and record["initialized"]:
                 run["status"] = "completed"
-            await self._store.put_operation(task.account_id, meta["target_id"], run)
+            await self._store.put_operation(task.account_id, record["id"], run)
         return run
 
     async def _plan(
@@ -1196,7 +1192,10 @@ class CompileLifecycle:
         meta = payload.get("compile")
         if not meta:
             return None
-        run = await self._store.get_operation(account_id, meta["target_id"], task_id)
+        record = await self._store.get(account_id, payload["to"])
+        if record is None:
+            return None
+        run = await self._store.get_operation(account_id, record["id"], task_id)
         if run is None or run["meta"].get("changes") is None:
             return None
         run_meta = run["meta"]
@@ -1218,7 +1217,15 @@ class CompileLifecycle:
         meta, request = task.meta["request"].get("compile"), task.meta["request"]
         if meta is None:
             return snapshot
-        account_id, target_id = task.account_id, meta["target_id"]
+        account_id = task.account_id
+        record = await self._store.get(account_id, request["to"])
+        if record is None:
+            if snapshot.error_code == "COMPILE_TARGET_STATE_TIMEOUT":
+                return snapshot
+            return ExternalTaskSnapshot(
+                status="cancelled", error_message="Compile target was moved or deleted"
+            )
+        target_id = record["id"]
         async with self._store.lock_operation(account_id, target_id, task.task_id, "finish"):
             run = await self._store.get_operation(account_id, target_id, task.task_id)
             if run is not None and run["finished_at"] is None:
