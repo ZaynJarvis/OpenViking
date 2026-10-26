@@ -674,10 +674,14 @@ async def test_http_contract_preserves_retries_and_compile_target_lifecycle(
             "/api/v1/compile", json={**payload, "args": {"auto_update": True, **rule}}
         )
         assert rejected.status_code == 400, rejected.text
-    await submit(
-        {**payload, "args": {"auto_update": False, "update_schedule": None}},
-        "compile-disable-schedule-key",
+    disabled = await client.post(
+        "/api/v1/compile",
+        json={**payload, "args": {"auto_update": False, "update_schedule": None}},
+        headers={"Idempotency-Key": "compile-disable-schedule-key"},
     )
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["result"]["auto_update"] is False
+    assert disabled.json()["result"]["update_schedule"] is None
     assert (await store.get(ctx.account_id, target))["update_schedule"] is None
     configured = await client.post("/api/v1/compile/config/update", json=settings)
     assert configured.status_code == 200, configured.text
