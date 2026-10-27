@@ -43,6 +43,7 @@ from openviking.service.task_tracker_concurrency import run_to_completion
 from openviking.telemetry import TelemetryRequest
 from openviking.utils.skill_processor import validate_skill_name
 from openviking_cli.exceptions import (
+    ConflictError,
     InternalError,
     InvalidArgumentError,
     NotFoundError,
@@ -77,6 +78,11 @@ class UpdateSkillRequest(BaseModel):
     source_metadata: Optional[Dict[str, Any]] = None
     telemetry: TelemetryRequest = False
     target_uri: Optional[str] = None
+    expected_revision: Optional[str] = Field(
+        default=None,
+        pattern=r"^[a-f0-9]{64}$",
+        description="Package revision returned by an integrity read; a mismatch rejects the update.",
+    )
 
     @model_validator(mode="after")
     def check_data_or_temp_file_id(self):
@@ -837,6 +843,10 @@ async def update_skill(
             # Recheck the installed definition and snapshot privacy under the lock.
             if not await viking_fs.exists(f"{root_uri}/SKILL.md", ctx=_ctx):
                 raise NotFoundError(root_uri, "skill")
+            if request.expected_revision is not None:
+                _, revision = await _skill_manifest_with_integrity(service, _ctx, root_uri)
+                if revision != request.expected_revision:
+                    raise ConflictError("Skill package changed", resource="VERSION_CONFLICT")
             if privacy is not None:
                 # Always acquire package then config. Keep config ownership
                 # through commit/rollback so a separate successful save cannot
