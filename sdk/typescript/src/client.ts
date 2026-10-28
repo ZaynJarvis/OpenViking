@@ -157,6 +157,7 @@ export class OpenVikingClient {
       preserve_structure: options.preserveStructure,
       watch_interval: options.watchInterval,
       processing_mode: options.processingMode,
+      mode: options.mode === "upsert" ? "upsert" : undefined,
       args:
         options.args && Object.keys(options.args).length
           ? options.args

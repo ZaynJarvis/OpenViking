@@ -27,6 +27,7 @@ from openviking.resource.processing_mode import (
     ProcessingMode,
     normalize_processing_mode,
 )
+from openviking.resource.update_mode import DEFAULT_RESOURCE_UPDATE_MODE, ResourceUpdateMode
 from openviking.server.identity import RequestContext
 from openviking.storage.acl import AclAction, AclSpec, AclUpdate
 from openviking.storage.errors import LockAcquisitionError
@@ -411,6 +412,7 @@ class ResourceProcessor:
         is_code_repo: bool,
         ingest_options: IngestOptions,
         source_metadata: Optional[Dict[str, str]],
+        mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE,
     ) -> Any:
         """Resolve and commit one artifact through the canonical update plan."""
         from openviking.metrics.datasources.resource import ResourceIngestionEventDataSource
@@ -462,6 +464,7 @@ class ResourceProcessor:
                 processing_mode=plan_processing_mode,
                 ingest_options=ingest_options,
                 vectorize=vectorize,
+                mode=mode,
             )
             with telemetry.measure("resource.update_plan.rnfv_snapshot"):
                 rnfv = await build_rnfv_snapshot(
@@ -792,6 +795,7 @@ class ResourceProcessor:
         tags: Optional[List[str]] = None,
         tag_mode: str = "replace",
         acl: AclSpec | Dict[str, Any] | None = None,
+        mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE,
         target_validator: Optional[Callable[[str, RequestContext], Awaitable[None]]] = None,
         **kwargs,
     ) -> Dict[str, Any]:
@@ -1103,6 +1107,7 @@ class ResourceProcessor:
                             prepared_resource=prepared_resource,
                             source_format=parse_result.source_format,
                         ),
+                        mode=mode,
                     )
                     incremental_noop = target_preexisting and context_update_plan.is_noop()
                     temp_uri = root_uri

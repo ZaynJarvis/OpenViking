@@ -108,6 +108,7 @@ async def test_no_split_is_forwarded_and_persisted_for_watch_replay(
         ctx=ctx,
         to="viking://resources/no_split_watch",
         watch_interval=30.0,
+        mode="upsert",
         args={"parse_mode": "no_split"},
     )
 
@@ -116,6 +117,24 @@ async def test_no_split_is_forwarded_and_persisted_for_watch_replay(
     assert watch_manager.create_task.await_args.kwargs["processor_kwargs"]["parse_mode"] == (
         "no_split"
     )
+    assert watch_manager.create_task.await_args.kwargs["processor_kwargs"]["mode"] == "upsert"
+
+
+def test_add_resource_message_round_trip_preserves_upsert_mode():
+    message = AddResourceMsg(
+        task_id="task-upsert",
+        path="https://example.com/demo.md",
+        root_uri="viking://resources/demo",
+        account_id="acct",
+        user_id="user",
+        role="user",
+        mode="upsert",
+    )
+
+    restored = AddResourceMsg.from_dict(message.to_dict())
+
+    assert restored.mode == "upsert"
+    assert AddResourceMsg.from_dict({**message.to_dict(), "mode": None}).mode == "replace"
 
 
 @pytest.mark.asyncio
@@ -141,11 +160,13 @@ async def test_no_split_watch_replay_preserves_auto_bound_file_target(
         path="https://example.com/guide.md",
         ctx=ctx,
         watch_interval=30.0,
+        mode="upsert",
         args={"parse_mode": "no_split"},
     )
     assert "root_uri" not in result
     message = service._enqueue_add_resource_job.await_args.args[0]
     assert message.defer_target_resolution is True
+    assert message.mode == "upsert"
     await service.execute_add_resource_job(
         message,
         ctx=ctx,
@@ -170,6 +191,7 @@ async def test_no_split_watch_replay_preserves_auto_bound_file_target(
     replay_message = service._enqueue_add_resource_job.await_args.args[0]
     assert replay_message.root_uri == "viking://resources/test"
     assert replay_message.to_is_directory is False
+    assert replay_message.mode == "upsert"
 
 
 @pytest.mark.asyncio
@@ -416,6 +438,7 @@ async def test_native_git_enqueue_persists_internal_no_split_mode(
         path="https://github.com/volcengine/OpenViking.git",
         ctx=ctx,
         to="viking://resources/repo",
+        mode="upsert",
         args={"parse_mode": "no_split"},
     )
 
@@ -423,4 +446,5 @@ async def test_native_git_enqueue_persists_internal_no_split_mode(
     message = service._enqueue_add_resource_job.await_args.args[0]
     assert isinstance(message, AddResourceMsg)
     assert message.parse_mode == "no_split"
+    assert message.mode == "upsert"
     assert "parser_backend" not in message.args

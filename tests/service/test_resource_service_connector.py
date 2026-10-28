@@ -2364,7 +2364,7 @@ async def test_tos_connector_rejects_wait(connector_config, ctx, service):
 
 
 @pytest.mark.asyncio
-async def test_tos_connector_forwards_tags_and_mode(
+async def test_tos_connector_forwards_tags_but_not_resource_update_mode(
     monkeypatch,
     connector_config,
     ctx,
@@ -2380,6 +2380,7 @@ async def test_tos_connector_forwards_tags_and_mode(
         path="tos://bucket/prefix",
         ctx=ctx,
         to="viking://resources/imports",
+        mode="upsert",
         tags=[" Team=Search ", "env=test", "team=search"],
         tag_mode="append",
     )
@@ -2389,6 +2390,7 @@ async def test_tos_connector_forwards_tags_and_mode(
         "tags": ["team=search", "env=test"],
         "tag_mode": "append",
     }
+    assert "mode" not in submitted
 
 
 @pytest.mark.asyncio

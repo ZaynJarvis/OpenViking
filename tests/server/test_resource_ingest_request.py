@@ -67,6 +67,7 @@ async def test_shared_ingest_forwards_complete_request_with_rule_overrides():
         wait=False,
         internal_task=False,
         processing_mode="vectors_only",
+        mode="upsert",
         tags=["rules"],
         tag_mode="append",
     )
@@ -92,6 +93,7 @@ async def test_shared_ingest_forwards_complete_request_with_rule_overrides():
     assert kwargs["args"] == {"feishu_access_token": "token"}
     assert kwargs["strict"] is True
     assert kwargs["processing_mode"] == "vectors_only"
+    assert kwargs["mode"] == "upsert"
     assert kwargs["tags"] == ["rules"]
     assert kwargs["tag_mode"] == "append"
     assert kwargs["wait"] is True

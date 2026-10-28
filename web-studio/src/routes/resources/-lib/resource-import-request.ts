@@ -76,6 +76,10 @@ export function buildResourceImportCommonBody({
     processing_mode: sourceCapabilities.nativeOptions
       ? additionalOptions.processingMode
       : 'semantic_and_vectors',
+    ...(sourceCapabilities.nativeOptions &&
+    additionalOptions.updateMode === 'upsert'
+      ? { mode: 'upsert' as const }
+      : {}),
     ...(tags.length
       ? { tags, tag_mode: additionalOptions.tagMode }
       : additionalOptions.tagMode === 'clear'

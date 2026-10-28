@@ -13,6 +13,7 @@ import {
 import type {
   ResourceProcessingMode,
   ResourceTagMode,
+  ResourceUpdateMode,
 } from '../-lib/resource-import-types'
 
 export type ResourceParseMode = 'default' | 'no_split'
@@ -21,6 +22,7 @@ export type AdditionalResourceOptionsValue = {
   parseMode: ResourceParseMode
   preserveStructure?: boolean
   processingMode: ResourceProcessingMode
+  updateMode: ResourceUpdateMode
   sourceName: string
   tagMode: ResourceTagMode
   tags: string
@@ -101,6 +103,27 @@ export function AdditionalResourceOptions({
               <SelectItem value="vectors_only">
                 {t('processingMode.vectorsOnly')}
               </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-2">
+          <Label>{t('updateMode')}</Label>
+          <Select
+            value={value.updateMode}
+            onValueChange={(updateMode) =>
+              onChange({
+                ...value,
+                updateMode: updateMode === 'upsert' ? 'upsert' : 'replace',
+              })
+            }
+            disabled={disabled || !nativeOptions}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="replace">{t('updateMode.replace')}</SelectItem>
+              <SelectItem value="upsert">{t('updateMode.upsert')}</SelectItem>
             </SelectContent>
           </Select>
         </div>

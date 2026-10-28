@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Any, Dict, Optional
 
 from openviking.resource.processing_mode import DEFAULT_PROCESSING_MODE, ProcessingMode
+from openviking.resource.update_mode import DEFAULT_RESOURCE_UPDATE_MODE, ResourceUpdateMode
 
 
 class AddResourcePhase(str, Enum):
@@ -59,6 +60,7 @@ class AddResourceMsg:
     understanding_response_id: Optional[str] = None
     understanding_file_id: Optional[str] = None
     processing_mode: ProcessingMode = DEFAULT_PROCESSING_MODE
+    mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE
     parse_mode: str = "default"
     tags: Optional[list[str]] = None
     tag_mode: str = "replace"
@@ -230,6 +232,7 @@ class AddResourceMsg:
                 else None
             ),
             processing_mode=data.get("processing_mode", DEFAULT_PROCESSING_MODE),
+            mode=data.get("mode") or DEFAULT_RESOURCE_UPDATE_MODE,
             parse_mode=str(data.get("parse_mode") or "default"),
             acl=data.get("acl"),
             tags=(list(data["tags"]) if isinstance(data.get("tags"), list) else None),

@@ -2088,6 +2088,7 @@ async def test_add_resource_remote_tags_are_forwarded(service, monkeypatch):
 
     result = await add_resource(
         path="https://example.com/tagged.md",
+        mode="upsert",
         tags=["team=search"],
         tag_mode="append",
     )
@@ -2095,6 +2096,7 @@ async def test_add_resource_remote_tags_are_forwarded(service, monkeypatch):
     assert "Resource added" in result
     assert captured["tags"] == ["team=search"]
     assert captured["tag_mode"] == "append"
+    assert captured["mode"] == "upsert"
 
 
 async def test_add_resource_temp_file_id_branch_resolves_and_ingests(

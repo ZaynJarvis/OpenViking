@@ -1183,6 +1183,122 @@ async def test_healthy_rnfv_empty_replace_request_is_noop():
     assert plan.is_noop()
 
 
+@pytest.mark.asyncio
+async def test_upsert_snapshot_retains_formal_only_sibling_in_semantic_plan():
+    from openviking.storage.context_update_plan import build_context_update_plan_from_snapshot
+    from openviking.storage.resource_rnfv import (
+        FormalEntry,
+        FormalTreeSnapshot,
+        NewArtifactSnapshot,
+        NewEntry,
+        RequestIntent,
+        RNFVSnapshot,
+        VectorIndexSnapshot,
+        VectorRecordSnapshot,
+    )
+
+    root = "viking://resources/repo"
+    request = RequestIntent(root, "semantic_and_vectors", mode="upsert")
+    snapshot = RNFVSnapshot(
+        request,
+        NewArtifactSnapshot({"changed.py": NewEntry(md5="new")}),
+        FormalTreeSnapshot(
+            {
+                "changed.py": FormalEntry(),
+                "kept.py": FormalEntry(),
+            }
+        ),
+        VectorIndexSnapshot(
+            {
+                "changed-l2": VectorRecordSnapshot(
+                    "changed-l2",
+                    f"{root}/changed.py",
+                    "changed.py",
+                    2,
+                    {"md5": "old", "abstract": "old changed"},
+                ),
+                "kept-l2": VectorRecordSnapshot(
+                    "kept-l2",
+                    f"{root}/kept.py",
+                    "kept.py",
+                    2,
+                    {"md5": "kept", "abstract": "old kept"},
+                ),
+            },
+            request.required_vector_fields(),
+        ),
+    )
+
+    diff, plan = await build_context_update_plan_from_snapshot(
+        snapshot=snapshot,
+        store=AsyncMock(),
+        artifact_ref=object(),
+        target=AsyncMock(),
+        vikingdb=AsyncMock(
+            hydrate_incremental_records=AsyncMock(return_value={}),
+        ),
+        context_type="resource",
+        is_code_repo=True,
+        account_id="acc",
+        ctx=object(),
+        root_preexisting=True,
+        artifact_paths={"changed.py": "repository/changed.py"},
+    )
+
+    assert diff.entries["kept.py"].content_state.value == "unchanged"
+    assert diff.entries["kept.py"].new_kind == "file"
+    assert [
+        (action.operation.value, action.relative_path) for action in plan.content_tree_actions
+    ] == [("upsert", "changed.py")]
+    assert not any(action.record_id == "kept-l2" for action in plan.direct_index_actions)
+    kept = next(
+        entry for entry in plan.semantic_plan.tree.entries if entry.relative_path == "kept.py"
+    )
+    assert kept.semantic_action.value == "reuse"
+
+
+@pytest.mark.asyncio
+async def test_upsert_snapshot_deletes_descendants_when_directory_becomes_file():
+    from openviking.storage.resource_diff import resolve_resource_diff
+    from openviking.storage.resource_rnfv import (
+        FormalEntry,
+        FormalTreeSnapshot,
+        NewArtifactSnapshot,
+        NewEntry,
+        RequestIntent,
+        RNFVSnapshot,
+        VectorIndexSnapshot,
+    )
+
+    snapshot = RNFVSnapshot(
+        RequestIntent(
+            "viking://resources/repo",
+            "semantic_and_vectors",
+            vectorize=False,
+            mode="upsert",
+        ),
+        NewArtifactSnapshot({"node": NewEntry(md5="new", is_dir=False)}),
+        FormalTreeSnapshot(
+            {
+                "node": FormalEntry(is_dir=True),
+                "node/old.md": FormalEntry(is_dir=False),
+            }
+        ),
+        VectorIndexSnapshot({}, frozenset()),
+    )
+
+    diff = await resolve_resource_diff(
+        snapshot,
+        store=AsyncMock(),
+        artifact_ref=object(),
+        target=AsyncMock(),
+    )
+
+    assert diff.entries["node"].content_state.value == "replace_kind"
+    assert diff.entries["node/old.md"].content_state.value == "deleted"
+    assert diff.entries["node/old.md"].new_kind is None
+
+
 def test_healthy_directory_rnfv_clear_updates_all_vector_levels():
     from openviking.storage.context_update_plan import (
         ContentState,

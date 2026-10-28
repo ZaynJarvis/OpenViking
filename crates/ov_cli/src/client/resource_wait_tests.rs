@@ -98,6 +98,7 @@ async fn submit(
         true,
         0.0,
         "semantic_and_vectors".into(),
+        "replace".into(),
         None,
         Vec::new(),
         "replace".into(),

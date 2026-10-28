@@ -77,6 +77,7 @@ const DEFAULT_GIT_OPTIONS: GitResourceOptionsValue = {
 const DEFAULT_ADDITIONAL_OPTIONS: AdditionalResourceOptionsValue = {
   parseMode: 'default',
   processingMode: 'semantic_and_vectors',
+  updateMode: 'replace',
   sourceName: '',
   tagMode: 'replace',
   tags: '',

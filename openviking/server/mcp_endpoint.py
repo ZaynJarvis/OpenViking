@@ -58,6 +58,7 @@ from openviking.privacy.operations import (
 )
 from openviking.pyagfs.exceptions import AGFSClientError, AGFSNotFoundError
 from openviking.resource.processing_mode import DEFAULT_PROCESSING_MODE, ProcessingMode
+from openviking.resource.update_mode import DEFAULT_RESOURCE_UPDATE_MODE, ResourceUpdateMode
 from openviking.retrieve.context_assembler import (
     DEFAULT_MAX_TOKENS,
     MAX_EXCLUDE_URIS,
@@ -1625,6 +1626,7 @@ async def add_resource(
     description: str = "",
     watch_interval: float = 0,
     processing_mode: ProcessingMode = DEFAULT_PROCESSING_MODE,
+    mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE,
     to: str = "",
     parent: str = "",
     tags: Optional[list[str]] = None,
@@ -1678,6 +1680,9 @@ async def add_resource(
             Only applies to remote-URL invocations.
         processing_mode: "semantic_and_vectors" for normal semantic processing, or
             "vectors_only" to skip semantic understanding and only build vector indexes.
+        mode: Native RNFV tree update mode. "replace" removes existing paths omitted by
+            the new parse result; "upsert" keeps omitted paths and only adds or updates
+            returned paths. Connector imports do not use this RNFV mode.
         to: Exact final URI including the leaf name (e.g.
             "viking://resources/volcengine/OpenViking", or
             "viking://~/resources/OpenViking" for an identity-private copy). Written verbatim; an existing
@@ -1724,7 +1729,7 @@ async def add_resource(
         return _mcp_failure(exc)
 
     try:
-        mode = normalize_parse_mode((args or {}).get("parse_mode", ParseMode.DEFAULT))
+        parse_mode_value = normalize_parse_mode((args or {}).get("parse_mode", ParseMode.DEFAULT))
     except InvalidArgumentError as exc:
         return _mcp_failure(f"Error: {exc}")
 
@@ -1763,6 +1768,7 @@ async def add_resource(
                 reason=description,
                 args=args,
                 processing_mode=processing_mode,
+                mode=mode,
                 tags=tags,
                 tag_mode=tag_mode,
                 acl=acl,
@@ -1812,6 +1818,7 @@ async def add_resource(
                 wait=False,
                 watch_interval=watch_interval,
                 processing_mode=processing_mode,
+                mode=mode,
                 enforce_public_remote_targets=True,
                 args=args,
                 tags=tags,
@@ -1867,9 +1874,10 @@ async def add_resource(
         reason=description,
         actor_peer_id=ctx.actor_peer_id or "",
         processing_mode=processing_mode,
+        mode=mode,
         tags=tags,
         tag_mode=tag_mode,
-        parse_mode=mode.value,
+        parse_mode=parse_mode_value.value,
         acl=acl,
     )
     base_url, url_source = _resolve_public_base_url()

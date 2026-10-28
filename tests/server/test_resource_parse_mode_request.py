@@ -102,6 +102,7 @@ async def test_signed_temp_upload_forwards_token_bound_parse_mode(
         parent="viking://user/test_user/resources/team",
         reason="",
         actor_peer_id="",
+        mode="upsert",
         parse_mode="no_split",
     )
     request = SimpleNamespace(
@@ -130,4 +131,5 @@ async def test_signed_temp_upload_forwards_token_bound_parse_mode(
     )
 
     assert ingest.await_args.kwargs["parse_mode"] == "no_split"
+    assert ingest.await_args.kwargs["mode"] == "upsert"
     assert ingest.await_args.kwargs["parent"] == "viking://user/test_user/resources/team"

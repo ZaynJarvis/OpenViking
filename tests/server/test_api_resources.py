@@ -30,7 +30,25 @@ def test_add_resource_request_defaults_processing_mode():
     request = AddResourceRequest(path="https://example.com/demo.md")
 
     assert request.processing_mode == "semantic_and_vectors"
+    assert request.mode == "replace"
     assert request.is_active is True
+
+
+def test_add_resource_request_accepts_upsert_mode():
+    request = AddResourceRequest(
+        path="https://example.com/demo.md",
+        mode="upsert",
+    )
+
+    assert request.mode == "upsert"
+
+
+def test_add_resource_request_rejects_unknown_mode():
+    with pytest.raises(ValueError, match="mode"):
+        AddResourceRequest(
+            path="https://example.com/demo.md",
+            mode="merge",
+        )
 
 
 def test_add_resource_request_accepts_declared_add_type():

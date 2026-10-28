@@ -11,6 +11,7 @@ const BASE_FORM_STATE: ResourceImportFormState = {
   additionalOptions: {
     parseMode: 'default',
     processingMode: 'semantic_and_vectors',
+    updateMode: 'replace',
     sourceName: '',
     tagMode: 'replace',
     tags: '',
@@ -64,6 +65,7 @@ describe('resource import request builders', () => {
           parseMode: 'no_split',
           preserveStructure: true,
           processingMode: 'vectors_only',
+          updateMode: 'upsert',
           sourceName: 'docs',
           tagMode: 'append',
           tags: 'team=docs, env=test',
@@ -87,6 +89,7 @@ describe('resource import request builders', () => {
       ignore_dirs: '.git,node_modules',
       include: '**/*.md',
       instruction: 'Prefer API docs.',
+      mode: 'upsert',
       parent: 'viking://resources/',
       preserve_structure: true,
       processing_mode: 'vectors_only',

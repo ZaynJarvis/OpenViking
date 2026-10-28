@@ -12,6 +12,7 @@ from openviking.core.path_variables import resolve_path_variables
 from openviking.core.uri_validation import validate_content_target_uri
 from openviking.parse.mode import ParseMode
 from openviking.resource.processing_mode import DEFAULT_PROCESSING_MODE, ProcessingMode
+from openviking.resource.update_mode import DEFAULT_RESOURCE_UPDATE_MODE, ResourceUpdateMode
 from openviking.server.identity import RequestContext
 from openviking.server.local_input_guard import require_remote_resource_source
 from openviking.server.temp_upload_store import TempUploadStore
@@ -77,6 +78,7 @@ class AddResourceRequest(BaseModel):
     watch_interval: float = 0
     is_active: bool = True
     processing_mode: ProcessingMode = DEFAULT_PROCESSING_MODE
+    mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE
     tags: Optional[list[str]] = None
     tag_mode: str = "replace"
     acl: AclSpec | None = None
@@ -185,6 +187,7 @@ async def ingest_resource_request(
         "directly_upload_media": request.directly_upload_media,
         "watch_interval": request.watch_interval,
         "processing_mode": request.processing_mode,
+        "mode": request.mode,
     }
     # Connector routing distinguishes an omitted create_parent from explicit false.
     if "create_parent" in request.model_fields_set:
@@ -231,6 +234,7 @@ async def ingest_temp_upload(
     reason: str = "",
     args: Optional[dict[str, Any]] = None,
     processing_mode: ProcessingMode = DEFAULT_PROCESSING_MODE,
+    mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE,
     tags: Optional[list[str]] = None,
     tag_mode: str = "replace",
     parse_mode: ParseMode | str = ParseMode.DEFAULT,
@@ -265,6 +269,7 @@ async def ingest_temp_upload(
                 source_name=resolved.original_filename,
                 wait=False,
                 processing_mode=processing_mode,
+                mode=mode,
                 allow_local_path_resolution=True,
                 enforce_public_remote_targets=True,
                 temp_file_id=temp_file_id,

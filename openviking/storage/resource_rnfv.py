@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
+from openviking.resource.update_mode import DEFAULT_RESOURCE_UPDATE_MODE, ResourceUpdateMode
 from openviking.utils.ingest_options import IngestOptions
 
 BASE_VECTOR_PROJECTION = frozenset({"id", "uri", "level", "md5"})
@@ -97,6 +98,7 @@ class RequestIntent:
     vectorize: bool = True
     scalar_intents: tuple[ScalarIntent, ...] = ()
     force: bool = False
+    mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE
 
     @classmethod
     def from_ingest_options(
@@ -108,28 +110,32 @@ class RequestIntent:
         vectorize: bool = True,
         force: bool = False,
         scalar_target_levels: frozenset[int] | None = None,
+        mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE,
     ) -> "RequestIntent":
         options = IngestOptions.from_value(ingest_options)
         scalar_intents: tuple[ScalarIntent, ...] = ()
+        normalized_processing_mode = getattr(processing_mode, "value", processing_mode)
         if options.search_tags is not None:
-            mode = getattr(processing_mode, "value", processing_mode)
             scalar_intents = (
                 ScalarIntent(
                     field="search_tags",
                     mode=IngestOptions.vector_search_tag_mode(options.search_tag_mode),
                     value=tuple(options.search_tags),
                     target_levels=scalar_target_levels
-                    or (frozenset({2}) if str(mode) == "vectors_only" else frozenset({0, 1, 2})),
+                    or (
+                        frozenset({2})
+                        if str(normalized_processing_mode) == "vectors_only"
+                        else frozenset({0, 1, 2})
+                    ),
                 ),
             )
-        else:
-            mode = getattr(processing_mode, "value", processing_mode)
         return cls(
             target_uri=target_uri.rstrip("/"),
-            processing_mode=str(mode),
+            processing_mode=str(normalized_processing_mode),
             vectorize=bool(vectorize),
             scalar_intents=scalar_intents,
             force=force,
+            mode=mode,
         )
 
     def required_vector_fields(self) -> frozenset[str]:

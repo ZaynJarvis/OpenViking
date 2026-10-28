@@ -198,6 +198,7 @@ Connector 要求精确的 `to` 目标，不支持 `wait=true`。`tos://` 来源�
 | watch_interval | float | 否 | 0 | 定时更新间隔（分钟）。>0 按目标占用规则为可重新读取的来源创建新 Watch；通过 `temp_file_id` 上传的一次性快照不能创建 Watch。≤0 不创建 Watch：原生导入显式指定 `to` 时暂停唯一可访问的任务（存在歧义时返回 409），Connector 导入不影响已有 Watch。显式 `to` 优先，否则绑定本次导入的 `root_uri`。 |
 | is_active | bool | 否 | True | Watch 初始调度状态。设为 `false` 时要求 `watch_interval > 0`，并在 `to`、`parent` 中二选一。`parent` 支持原生飞书 URL 和 Git 导入；Connector 仍要求精确的 `to`。首次导入仍执行一次，随后保持暂停 |
 | processing_mode | string | 否 | `semantic_and_vectors` | 入库后的处理模式。`semantic_and_vectors` 是默认流程：生成语义产物（`.abstract.md`、`.overview.md`）并生成向量。`vectors_only` 跳过语义理解/VLM 总结，只对当前资源文件生成向量 |
+| mode | string | 否 | `replace` | 原生 RNFV 资源树更新模式。`replace` 会删除新解析结果中缺失的既有路径；`upsert` 只新增或修改返回的路径，并保留缺失的既有路径 |
 | tags | string[] | 否 | None | 导入时写入向量检索记录的显式检索标签，格式必须是 `k=v`，例如 `["team=search", "env=test"]`。搜索接口可用同名 `tags` 参数过滤召回 |
 | tag_mode | string | 否 | `"replace"` | 标签写入模式：`replace` 覆盖、`append` 按 key 合并、`clear` 清空。`clear` 不要求传 `tags`；`replace` 配合空数组不会修改已有标签。导入时标签会随本次生成的每条向量记录写入；不会在完成后额外调用 `set_tags`，响应也不返回 `tags_result` |
 | acl | object | 否 | None | 设置最终导入根节点的直接 ACL，要求 manage；省略时保留已有权限。见 [ACL API](12-acl.md)。 |
@@ -213,7 +214,8 @@ Connector 要求精确的 `to` 目标，不支持 `wait=true`。`tos://` 来源�
 - `path`、`to`、`watch_interval`、`include` 等 `add_resource` 核心字段不能放入 `args`。原生导入也拒绝 `args.exclude`；TOS Connector 导入允许它与 `args.tos_prefix` 一起使用。
 
 **补充说明**：
-- `to` 和 `parent` 不能同时使用。`to` 是最终保存位置：目标不存在就创建，目标已存在就覆盖该目标；如果目标是目录，目录里本次导入没有生成的旧文件或子目录会被删除。`parent` 是保存目录，适合向已有目录追加新资源；父目录不存在时使用 `create_parent=true` 或 CLI 的 `--parent-auto-create`。当导入后的 `root_uri` 与 `to` 相同时，语义与向量处理会复用未变化内容，只处理变化部分。
+- `to` 和 `parent` 不能同时使用。`to` 是最终保存位置：目标不存在就创建，目标已存在就刷新。默认 `mode=replace` 会删除本次原生导入未生成的旧路径；`mode=upsert` 会保留它们。`parent` 是保存目录，适合向已有目录追加新资源；父目录不存在时使用 `create_parent=true` 或 CLI 的 `--parent-auto-create`。当导入后的 `root_uri` 与 `to` 相同时，语义与向量处理会复用未变化内容，只处理变化部分。
+- `mode=upsert` 只控制原生 RNFV 如何处理新解析结果中缺失的路径。同一路径发生文件/目录类型变化时仍会替换旧节点，并可能删除原目录子树。Connector 导入不经过这条 RNFV planner，因此 `mode` 不改变 Connector 行为。
 - 创建新资源要求目标父目录可写；显式更新已有 `to` 要求该目标可写。权限校验在任务入队前完成。自动命名按实际 URI 占用判断，即使同名资源不可读也会选择 `_1`、`_2` 等后缀，而不会尝试覆盖。
 - `wait=false` 时，原生导入入队后返回 `status=success`，Connector 导入返回 `status=accepted`。两者都不表示后台处理已经完成；最终状态以对应 `task_id` 为准。
 - 如果同时省略 `to` 和 `parent`，服务端会先尝试使用当前用户的 `add_targets.resource_uri` 覆盖配置，再使用 `server.user_config_defaults.add_targets.resource_uri`。两者都没有配置时，保持旧的目标解析行为。
@@ -228,7 +230,7 @@ Connector 要求精确的 `to` 目标，不支持 `wait=true`。`tos://` 来源�
 - 删除资源时，系统会在删除前扫描本次上下文对应的 self 或 peer 记忆中的 `resource_refs`，清理对应资源 URI 和由该 `reason` 引入的内容，并重新刷新相关记忆的语义索引。
 - 其他来源在 `wait=false` 时会在响应前完成来源解析、目标解析和 AGFS 写入，仅 semantic 与 embedding 队列继续异步处理。
 - `processing_mode=vectors_only` 不调用 VLM 语义理解阶段，也不会生成或刷新 `.abstract.md` / `.overview.md`。对已存在目标，它会保留旧的语义产物和旧的语义向量；仍会更新资源树，在 `build_index=true` 时向量化当前非隐藏文件，并清理由本次刷新删除的文件 detail 向量。
-- `processing_mode` 只属于 `add_resource`。管理员维护已有数据时，`reindex` API/CLI 仍使用 `mode`（`vectors_only`、`semantic_and_vectors`）。
+- 对 `add_resource`，`mode` 控制资源树成员关系，`processing_mode` 控制语义与向量处理。管理员 `reindex` API/CLI 的同名 `mode` 是独立的维护参数（`vectors_only`、`semantic_and_vectors`）。
 - `watch_interval > 0` 时，如果指定了 `to`，监控任务绑定该目标；如果未指定 `to`，监控任务绑定本次导入返回的 `root_uri`。如果无法得到稳定 `root_uri`，请求会报错并要求显式传 `to`。
 - Connector 导入设置 `is_active=false` 时会在提交前创建暂停状态的 Watch；原生飞书和 Git 导入会通过资源队列透传 `is_active`，解析出最终资源 URI 后再创建 Watch。两种情况下首次导入均执行一次，周期调度保持关闭。
 - 飞书/Lark 应用 token 导入不传 `args.feishu_access_token`。OpenViking 保持原有应用凭证流程，由 SDK 使用 `app_id` 和 `app_secret` 自动获取 app/tenant token。该模式支持一次性导入和 `watch_interval > 0`。

@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from openviking.resource.processing_mode import DEFAULT_PROCESSING_MODE, ProcessingMode
+from openviking.resource.update_mode import DEFAULT_RESOURCE_UPDATE_MODE, ResourceUpdateMode
 from openviking.server.identity import Role
 from openviking.storage.acl import AclSpec
 
@@ -59,6 +60,7 @@ class _TokenInfo:
     reason: str
     actor_peer_id: str
     processing_mode: ProcessingMode
+    mode: ResourceUpdateMode
     tags: Optional[list[str]]
     tag_mode: str
     parse_mode: str
@@ -84,6 +86,7 @@ class ConsumedUploadToken:
     actor_peer_id: str
     parent: str = ""
     processing_mode: ProcessingMode = DEFAULT_PROCESSING_MODE
+    mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE
     tags: Optional[list[str]] = None
     tag_mode: str = "replace"
     parse_mode: str = "default"
@@ -112,6 +115,7 @@ class UploadTokenStore:
         reason: str = "",
         actor_peer_id: str = "",
         processing_mode: ProcessingMode = DEFAULT_PROCESSING_MODE,
+        mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE,
         tags: Optional[list[str]] = None,
         tag_mode: str = "replace",
         parse_mode: str = "default",
@@ -141,6 +145,7 @@ class UploadTokenStore:
             reason,
             actor_peer_id,
             processing_mode,
+            mode,
             tags,
             tag_mode,
             parse_mode,
@@ -178,6 +183,7 @@ class UploadTokenStore:
             reason=info.reason,
             actor_peer_id=info.actor_peer_id,
             processing_mode=info.processing_mode,
+            mode=info.mode,
             tags=info.tags,
             tag_mode=info.tag_mode,
             parse_mode=info.parse_mode,

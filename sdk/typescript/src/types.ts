@@ -99,6 +99,7 @@ export interface AddResourceOptions extends WaitOptions {
   preserveStructure?: boolean;
   watchInterval?: number;
   processingMode?: ProcessingMode;
+  mode?: "replace" | "upsert";
   args?: JsonObject;
   tags?: string[];
   tagMode?: "replace" | "append" | "clear";

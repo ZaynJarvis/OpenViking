@@ -79,6 +79,7 @@ class AddResourceOptions(_ExtraOptions, total=False):
     args: Dict[str, Any]
     telemetry: Any
     processing_mode: ProcessingMode
+    mode: Literal["replace", "upsert"]
     add_type: str
     tags: List[str]
     tag_mode: Literal["replace", "append", "clear"]

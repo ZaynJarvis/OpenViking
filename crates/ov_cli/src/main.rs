@@ -467,6 +467,14 @@ enum Commands {
             help_heading = "Advanced options"
         )]
         processing_mode: String,
+        /// Resource tree update mode
+        #[arg(
+            long = "mode",
+            default_value = "replace",
+            value_parser = ["replace", "upsert"],
+            help_heading = "Common options"
+        )]
+        mode: String,
         /// Extra options as key:value pairs or a JSON object. With a path/URL:
         /// parser-specific import options sent to the server, e.g.
         /// --args feishu_access_token:u-xxx. With --manifest: run options consumed
@@ -3427,6 +3435,7 @@ async fn main() {
             no_directly_upload_media,
             watch_interval,
             processing_mode,
+            mode,
             resource_args,
             upload_options,
         } => {
@@ -3447,6 +3456,7 @@ async fn main() {
                                 wait,
                                 watch_interval,
                                 processing_mode,
+                                mode,
                                 external_connector: run.external_connector,
                             },
                             ctx,
@@ -3471,6 +3481,7 @@ async fn main() {
                     no_directly_upload_media,
                     watch_interval.unwrap_or(0.0),
                     processing_mode,
+                    mode,
                     resource_args,
                     tags,
                     tag_mode,
@@ -5032,13 +5043,21 @@ mod tests {
             "team=search,env=test",
             "--tag-mode",
             "append",
+            "--mode",
+            "upsert",
         ])
         .expect("add-resource tag flags should parse");
 
         match cli.command {
-            Commands::AddResource { tags, tag_mode, .. } => {
+            Commands::AddResource {
+                tags,
+                tag_mode,
+                mode,
+                ..
+            } => {
                 assert_eq!(tags, vec!["team=search", "env=test"]);
                 assert_eq!(tag_mode, "append");
+                assert_eq!(mode, "upsert");
             }
             _ => panic!("expected add-resource command"),
         }

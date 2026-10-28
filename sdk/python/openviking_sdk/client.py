@@ -759,6 +759,8 @@ class AsyncHTTPClient:
             },
             protected={"path", "temp_file_id", "source_name"},
         )
+        if request_data.get("mode") == "replace":
+            request_data.pop("mode")
 
         path_obj = Path(path)
         if not add_type and path_obj.exists():

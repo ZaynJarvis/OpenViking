@@ -78,11 +78,13 @@ async def test_mcp_temp_file_id_forwards_no_split(
 
     result = await mcp_endpoint.add_resource(
         temp_file_id="upload_abcdef123.md",
+        mode="upsert",
         args={"parse_mode": "no_split"},
     )
 
     assert "Resource added" in result
     assert ingest.await_args.kwargs["args"] == {"parse_mode": "no_split"}
+    assert ingest.await_args.kwargs["mode"] == "upsert"
 
 
 @pytest.mark.asyncio
@@ -98,12 +100,14 @@ async def test_mcp_local_upload_token_binds_no_split(
 
     await mcp_endpoint.add_resource(
         path="/tmp/manual.pdf",
+        mode="upsert",
         args={"parse_mode": "no_split"},
     )
 
     assert len(upload_token_store._store) == 1
     token_info = next(iter(upload_token_store._store.values()))
     assert token_info.parse_mode == "no_split"
+    assert token_info.mode == "upsert"
 
 
 @pytest.mark.asyncio

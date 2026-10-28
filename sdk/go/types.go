@@ -43,6 +43,7 @@ type AddResourceOptions struct {
 	PreserveStructure   *bool
 	WatchInterval       float64
 	ProcessingMode      string
+	Mode                string
 	Args                map[string]any
 	Tags                []string
 	TagMode             string

@@ -8,6 +8,8 @@ export type TempUploadResult = {
 
 export type ResourceProcessingMode = 'semantic_and_vectors' | 'vectors_only'
 
+export type ResourceUpdateMode = 'replace' | 'upsert'
+
 export type ResourceTagMode = 'replace' | 'append' | 'clear'
 
 export type ResourceImportArgs = Record<string, unknown> & {
@@ -52,6 +54,7 @@ export type ResourceImportRequest = {
   telemetry?: boolean | Record<string, boolean>
   watch_interval?: number
   processing_mode?: ResourceProcessingMode
+  mode?: ResourceUpdateMode
   tags?: string[]
   tag_mode?: ResourceTagMode
 }

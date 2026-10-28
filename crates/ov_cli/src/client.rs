@@ -895,6 +895,7 @@ impl HttpClient {
         directly_upload_media: bool,
         watch_interval: f64,
         processing_mode: String,
+        mode: String,
         resource_args: Option<Map<String, Value>>,
         tags: Vec<String>,
         tag_mode: String,
@@ -926,6 +927,11 @@ impl HttpClient {
                 body.as_object_mut()
                     .expect("add_resource request body must be an object")
                     .insert("create_parent".to_string(), serde_json::Value::Bool(true));
+            }
+            if mode == "upsert" {
+                body.as_object_mut()
+                    .expect("add_resource request body must be an object")
+                    .insert("mode".to_string(), serde_json::Value::String(mode.clone()));
             }
             compact_request_body(&mut body);
             body
@@ -2405,6 +2411,7 @@ mod tests {
                 true,
                 0.0,
                 "semantic_and_vectors".to_string(),
+                "replace".to_string(),
                 None,
                 Vec::new(),
                 "replace".to_string(),
@@ -2418,6 +2425,7 @@ mod tests {
             .await
             .expect("request should be captured");
         assert!(!default_request.contains("parse_mode"));
+        assert!(!default_request.contains(r#""mode""#));
 
         let (no_split_url, no_split_request_rx) = spawn_request_capture_server().await;
         let no_split_client =
@@ -2441,6 +2449,7 @@ mod tests {
                 true,
                 0.0,
                 "semantic_and_vectors".to_string(),
+                "upsert".to_string(),
                 Some(no_split_args),
                 Vec::new(),
                 "replace".to_string(),
@@ -2454,6 +2463,7 @@ mod tests {
             .await
             .expect("request should be captured");
         assert!(no_split_request.contains(r#""args":{"parse_mode":"no_split"}"#));
+        assert!(no_split_request.contains(r#""mode":"upsert""#));
     }
 
     #[test]

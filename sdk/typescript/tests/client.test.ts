@@ -439,6 +439,30 @@ describe("OpenVikingClient", () => {
     });
   });
 
+  it("sends upsert mode and omits replace mode for addResource requests", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementation(() => Promise.resolve(ok({})));
+    const client = new OpenVikingClient({
+      baseUrl: "https://example.com",
+      fetch: fetcher,
+    });
+
+    await client.addResource("https://example.com/guide.md", {
+      mode: "upsert",
+    });
+    expect(JSON.parse(String(fetcher.mock.calls[0]![1]?.body))).toMatchObject({
+      mode: "upsert",
+    });
+
+    await client.addResource("https://example.com/guide.md", {
+      mode: "replace",
+    });
+    expect(
+      JSON.parse(String(fetcher.mock.calls[1]![1]?.body)),
+    ).not.toHaveProperty("mode");
+  });
+
   it("sends processing_mode for write requests", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(ok({}));
     const client = new OpenVikingClient({

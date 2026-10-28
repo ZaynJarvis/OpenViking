@@ -58,6 +58,11 @@ from openviking.resource.processing_mode import (
     ProcessingMode,
     normalize_processing_mode,
 )
+from openviking.resource.update_mode import (
+    DEFAULT_RESOURCE_UPDATE_MODE,
+    ResourceUpdateMode,
+    normalize_resource_update_mode,
+)
 from openviking.server.identity import RequestContext
 from openviking.server.local_input_guard import (
     is_remote_resource_source,
@@ -127,6 +132,7 @@ _ADD_RESOURCE_ARGS_RESERVED_FIELDS = frozenset(
         "build_index",
         "summarize",
         "processing_mode",
+        "mode",
         "watch_interval",
         "is_active",
         "skip_watch_management",
@@ -365,8 +371,11 @@ class ResourceService:
         processor_kwargs: Dict[str, Any],
         tags: Optional[List[str]],
         tag_mode: str,
+        mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE,
     ) -> Dict[str, Any]:
         watch_kwargs = self._sanitize_watch_processor_kwargs(processor_kwargs)
+        if mode != DEFAULT_RESOURCE_UPDATE_MODE:
+            watch_kwargs["mode"] = mode
         if tags is not None or tag_mode == "clear":
             if tags is not None:
                 watch_kwargs["tags"] = tags
@@ -946,6 +955,7 @@ class ResourceService:
                         build_index=msg.build_index,
                         summarize=msg.summarize,
                         processing_mode=msg.processing_mode,
+                        mode=msg.mode,
                         parse_mode=msg.parse_mode,
                         watch_interval=msg.watch_interval,
                         is_active=msg.is_active,
@@ -1321,7 +1331,8 @@ class ResourceService:
         build_index: bool,
         summarize: bool,
         processing_mode: ProcessingMode,
-        mode: ParseMode,
+        parse_mode: ParseMode,
+        mode: ResourceUpdateMode,
         watch_interval: float,
         manage_watch: bool,
         tags: Optional[List[str]],
@@ -1340,7 +1351,7 @@ class ResourceService:
         target_to_is_exact = bool(to and not is_content_root_uri(to, kind="resource"))
         defer_candidate_resolution = bool(
             (plan.defer_unnamed_target and plan.source_identity.source_name is None and not to)
-            or (mode is ParseMode.NO_SPLIT and not target_to_is_exact)
+            or (parse_mode is ParseMode.NO_SPLIT and not target_to_is_exact)
         )
         root_uri = ""
         resource_lock = None
@@ -1397,7 +1408,8 @@ class ResourceService:
                 build_index=build_index,
                 summarize=summarize,
                 processing_mode=processing_mode,
-                parse_mode=mode.value,
+                mode=mode,
+                parse_mode=parse_mode.value,
                 watch_interval=watch_interval,
                 is_active=is_active,
                 acl=acl.model_dump(mode="json", exclude_none=True) if acl is not None else None,
@@ -1624,6 +1636,7 @@ class ResourceService:
         build_index: bool = True,
         summarize: bool = False,
         processing_mode: ProcessingMode = DEFAULT_PROCESSING_MODE,
+        mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE,
         watch_interval: float = 0,
         is_active: Optional[bool] = None,
         tags: Optional[List[str]] = None,
@@ -1659,6 +1672,7 @@ class ResourceService:
             build_index=build_index,
             summarize=summarize,
             processing_mode=processing_mode,
+            mode=mode,
             watch_interval=watch_interval,
             is_active=is_active,
             acl=acl,
@@ -1686,6 +1700,7 @@ class ResourceService:
         build_index: bool = True,
         summarize: bool = False,
         processing_mode: ProcessingMode = DEFAULT_PROCESSING_MODE,
+        mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE,
         watch_interval: float = 0,
         allow_local_path_resolution: bool = True,
         enforce_public_remote_targets: bool = False,
@@ -1708,6 +1723,7 @@ class ResourceService:
             build_index=build_index,
             summarize=summarize,
             processing_mode=processing_mode,
+            mode=mode,
             watch_interval=watch_interval,
             manage_watch=False,
             allow_local_path_resolution=allow_local_path_resolution,
@@ -1733,6 +1749,7 @@ class ResourceService:
         build_index: bool = True,
         summarize: bool = False,
         processing_mode: ProcessingMode = DEFAULT_PROCESSING_MODE,
+        mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE,
         watch_interval: float = 0,
         is_active: Optional[bool] = None,
         manage_watch: bool = True,
@@ -1810,6 +1827,7 @@ class ResourceService:
                 "is_active=false requires watch_interval > 0 and either 'to' or 'parent'."
             )
         processing_mode = normalize_processing_mode(processing_mode)
+        mode = normalize_resource_update_mode(mode)
         self._validate_add_resource_tag_policy(tags=tags, tag_mode=tag_mode)
         from openviking.connector.delegate import (
             CONNECTOR_DISPLAY_RESOURCE_CONFIG_ARG,
@@ -1825,7 +1843,7 @@ class ResourceService:
             watch_interval=watch_interval,
             allowed_reserved_fields=allowed_reserved_fields,
         )
-        mode = (
+        parse_mode_value = (
             normalize_parse_mode(parse_mode)
             if parse_mode is not None
             else normalized_args.parse_mode
@@ -1903,7 +1921,7 @@ class ResourceService:
             build_index=build_index,
             summarize=summarize,
             processing_mode=processing_mode,
-            parse_mode=mode,
+            parse_mode=parse_mode_value,
             watch_interval=watch_interval,
             connector_args=normalized_args.processor_kwargs,
             kwargs=kwargs,
@@ -2095,7 +2113,7 @@ class ResourceService:
             source_plan = await self._prepare_standard_source_plan(
                 path=path,
                 ctx=ctx,
-                mode=mode,
+                mode=parse_mode_value,
                 allow_local_path_resolution=allow_local_path_resolution,
                 processor_kwargs=kwargs,
                 watch_auth_state=normalized_args.watch_auth_state,
@@ -2113,6 +2131,7 @@ class ResourceService:
                 build_index=build_index,
                 summarize=summarize,
                 processing_mode=processing_mode,
+                parse_mode=parse_mode_value,
                 mode=mode,
                 watch_interval=watch_interval,
                 manage_watch=manage_watch,
@@ -2139,7 +2158,8 @@ class ResourceService:
                 build_index=build_index,
                 summarize=summarize,
                 processing_mode=processing_mode,
-                parse_mode=mode,
+                parse_mode=parse_mode_value,
+                mode=mode,
                 watch_interval=watch_interval,
                 is_active=is_active,
                 manage_watch=manage_watch,
@@ -2198,6 +2218,7 @@ class ResourceService:
         build_index: bool = True,
         summarize: bool = False,
         processing_mode: ProcessingMode = DEFAULT_PROCESSING_MODE,
+        mode: ResourceUpdateMode = DEFAULT_RESOURCE_UPDATE_MODE,
         parse_mode: ParseMode | str = ParseMode.DEFAULT,
         watch_interval: float = 0,
         is_active: Optional[bool] = None,
@@ -2217,9 +2238,9 @@ class ResourceService:
     ) -> Dict[str, Any]:
         """Execute an already-routed resource ingestion."""
         self._ensure_initialized()
-        mode = normalize_parse_mode(parse_mode)
-        if mode is ParseMode.NO_SPLIT:
-            kwargs["parse_mode"] = mode.value
+        parse_mode_value = normalize_parse_mode(parse_mode)
+        if parse_mode_value is ParseMode.NO_SPLIT:
+            kwargs["parse_mode"] = parse_mode_value.value
         telemetry = get_current_telemetry()
         telemetry_id = telemetry.telemetry_id
         register_telemetry(telemetry)
@@ -2261,6 +2282,7 @@ class ResourceService:
                 build_index=build_index,
                 summarize=summarize,
                 processing_mode=processing_mode,
+                mode=mode,
                 stage_callback=stage_callback,
                 allow_local_path_resolution=allow_local_path_resolution,
                 prepared_resource=prepared_resource,
@@ -2300,7 +2322,7 @@ class ResourceService:
                 build_index=build_index,
                 summarize=summarize,
                 processing_mode=processing_mode,
-                processor_kwargs=self._watch_processor_kwargs(kwargs, tags, tag_mode),
+                processor_kwargs=self._watch_processor_kwargs(kwargs, tags, tag_mode, mode),
                 watch_auth_state=watch_auth_state,
                 ctx=ctx,
                 on_watch_ready=on_watch_ready,
@@ -2333,6 +2355,7 @@ class ResourceService:
                     build_index=build_index,
                     summarize=summarize,
                     processing_mode=processing_mode,
+                    mode=mode,
                     strict=bool(kwargs.get("strict", False)),
                     ignore_dirs=kwargs.get("ignore_dirs"),
                     include=kwargs.get("include"),

@@ -383,6 +383,7 @@ async def test_add_resources_rnfv_uses_subtree_inventory_to_delete_orphans(monke
         vectorize=True,
         summarize=True,
         processing_mode="semantic_and_vectors",
+        mode="upsert",
         is_code_repo=False,
         ingest_options=IngestOptions(),
         source_metadata=None,
@@ -394,6 +395,7 @@ async def test_add_resources_rnfv_uses_subtree_inventory_to_delete_orphans(monke
     assert captured.get("vector_inventory_strategy", "subtree") == "subtree"
     assert "inventory_limit" not in captured
     assert "inventory_query_batch_size" not in captured
+    assert captured["request_intent"].mode == "upsert"
 
 
 @pytest.mark.asyncio

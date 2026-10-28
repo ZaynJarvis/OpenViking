@@ -1090,6 +1090,28 @@ async def test_add_resource_forwards_processing_mode():
 
 
 @pytest.mark.asyncio
+async def test_add_resource_sends_upsert_mode_and_omits_replace_mode():
+    client = AsyncHTTPClient(url="http://127.0.0.1:1933")
+    fake_http = SimpleNamespace(post=AsyncMock(return_value=object()))
+    client._http = fake_http
+    client._handle_response_data = lambda _response: {
+        "result": {"root_uri": "viking://resources/demo"}
+    }
+
+    await client.add_resource(
+        "https://example.com/demo.md",
+        options={"mode": "upsert"},
+    )
+    assert fake_http.post.await_args.kwargs["json"]["mode"] == "upsert"
+
+    await client.add_resource(
+        "https://example.com/demo.md",
+        options={"mode": "replace"},
+    )
+    assert "mode" not in fake_http.post.await_args.kwargs["json"]
+
+
+@pytest.mark.asyncio
 async def test_add_resource_forwards_declared_add_type_with_exact_target():
     client = AsyncHTTPClient(url="http://127.0.0.1:1933")
     fake_http = SimpleNamespace(post=AsyncMock(return_value=object()))

@@ -1292,8 +1292,9 @@ async def build_context_update_plan_from_snapshot(
         artifact_paths=paths,
     )
     new_kinds = {
-        path: "directory" if entry.is_dir else "file"
-        for path, entry in snapshot.new.entries.items()
+        path: entry.new_kind
+        for path, entry in diff.entries.items()
+        if entry.new_kind in {"file", "directory"}
     }
     records, closure = await hydrate_context_plan_records(
         diff=diff,

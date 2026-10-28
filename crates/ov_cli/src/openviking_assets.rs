@@ -243,6 +243,7 @@ pub struct ManifestRunOptions {
     /// Overrides per-asset / catalog-default values when set.
     pub watch_interval: Option<f64>,
     pub processing_mode: String,
+    pub mode: String,
     /// Route assets through an external Connector service instead of the
     /// standard ingestion pipeline.
     pub external_connector: bool,
@@ -296,6 +297,7 @@ impl Default for ManifestRunOptions {
             wait: false,
             watch_interval: None,
             processing_mode: "semantic_and_vectors".to_string(),
+            mode: "replace".to_string(),
             external_connector: false,
         }
     }
@@ -822,6 +824,7 @@ struct HttpSubmitter {
     client: crate::client::HttpClient,
     wait: bool,
     processing_mode: String,
+    mode: String,
     external_connector: bool,
 }
 
@@ -871,6 +874,7 @@ impl Submitter for HttpSubmitter {
                 true,
                 watch_interval,
                 self.processing_mode.clone(),
+                self.mode.clone(),
                 args,
                 Vec::new(),
                 "replace".to_string(),
@@ -1070,6 +1074,7 @@ pub async fn handle_manifest_apply(
         client,
         wait: options.wait,
         processing_mode: options.processing_mode.clone(),
+        mode: options.mode.clone(),
         external_connector: options.external_connector,
     };
     let summary = apply_manifest_core(

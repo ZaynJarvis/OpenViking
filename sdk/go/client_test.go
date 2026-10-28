@@ -1097,6 +1097,31 @@ func TestAddResourceSendsAddTypeAndProcessingMode(t *testing.T) {
 	}
 }
 
+func TestAddResourceSendsUpsertModeAndOmitsReplaceMode(t *testing.T) {
+	requests := 0
+	client, closeServer := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		body := readJSONBody(t, r)
+		if requests == 1 && body["mode"] != "upsert" {
+			t.Fatalf("mode = %#v", body["mode"])
+		}
+		if requests == 2 {
+			if _, ok := body["mode"]; ok {
+				t.Fatalf("replace mode must be omitted: %#v", body)
+			}
+		}
+		writeOK(t, w, map[string]any{"root_uri": "viking://resources/demo"})
+	}))
+	defer closeServer()
+
+	if _, err := client.AddResource(context.Background(), "https://example.com/demo.md", &AddResourceOptions{Mode: "upsert"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.AddResource(context.Background(), "https://example.com/demo.md", &AddResourceOptions{Mode: "replace"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSessionSendsLatestMessageAndRetentionFields(t *testing.T) {
 	var bodies []map[string]any
 	client, closeServer := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

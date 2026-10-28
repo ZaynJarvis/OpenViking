@@ -251,6 +251,18 @@ async def resolve_resource_diff(
     hash_paths: list[str] = []
     md5_fast_path_count = 0
     keys = set(new) | set(formal) | set(records_by_rel)
+    replaced_directories = {
+        path
+        for path, old_entry in formal.items()
+        if old_entry.is_dir and (new_entry := new.get(path)) is not None and not new_entry.is_dir
+    }
+
+    def below_replaced_directory(path: str) -> bool:
+        return any(
+            bool(path) if directory == "" else path.startswith(directory + "/")
+            for directory in replaced_directories
+        )
+
     for rel_path in sorted(keys):
         new_entry = new.get(rel_path)
         old_entry = formal.get(rel_path)
@@ -281,7 +293,12 @@ async def resolve_resource_diff(
             if not new_entry.is_dir and not new_entry.md5:
                 hash_paths.append(rel_path)
         elif old_entry is not None:
-            states[rel_path] = (ContentState.DELETED, None)
+            states[rel_path] = (
+                ContentState.UNCHANGED
+                if snapshot.request.mode == "upsert" and not below_replaced_directory(rel_path)
+                else ContentState.DELETED,
+                None,
+            )
         else:
             states[rel_path] = (ContentState.ABSENT, None)
 
@@ -326,8 +343,16 @@ async def resolve_resource_diff(
         state, md5 = states[rel_path]
         new_entry = new.get(rel_path)
         old_entry = formal.get(rel_path)
-        new_kind = ("directory" if new_entry.is_dir else "file") if new_entry is not None else None
         old_kind = ("directory" if old_entry.is_dir else "file") if old_entry is not None else None
+        new_kind = (
+            "directory"
+            if new_entry is not None and new_entry.is_dir
+            else "file"
+            if new_entry is not None
+            else old_kind
+            if snapshot.request.mode == "upsert" and state is not ContentState.DELETED
+            else None
+        )
         current_kind = (
             new_kind if state not in {ContentState.DELETED, ContentState.ABSENT} else None
         )
