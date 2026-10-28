@@ -761,7 +761,6 @@ def new_operation(
         "finished_at": None,
         "params": params,
         "result": None,
-        "conflicts_num": 0,
         "error": None,
         "meta": {},
     }
@@ -1310,7 +1309,7 @@ class CompileLifecycle:
     async def _finalize_directories(
         self, task: Any, run: Dict[str, Any], ctx: RequestContext
     ) -> None:
-        """Finalize task's target tree and set run's indexed conflict-file count (up to 100).
+        """Finalize the task's target tree and save its indexed conflict count (up to 100).
 
         Incomplete indexes or failed tag queries raise before completion; retries
         reuse the reindex ID and preserve published output.
@@ -1343,7 +1342,8 @@ class CompileLifecycle:
             filter=build_search_tags_filter(["has_conflict=true"]),
             level=[2],
         )
-        run["conflicts_num"] = conflicts.total
+        async with self._store.edit(task.account_id, target) as record:
+            record["conflicts_num"] = conflicts.total
 
     async def _release(
         self, account_id: str, target_to: str, task: Any, run: Optional[Dict[str, Any]]
@@ -1380,7 +1380,6 @@ class CompileLifecycle:
                     if run["status"] == "completed":
                         first_success = not record["initialized"]
                         record["initialized"] = True
-                        record["conflicts_num"] = run["conflicts_num"]
                         if run_meta.get("head"):
                             progress_key = (
                                 "scheduled_progress"

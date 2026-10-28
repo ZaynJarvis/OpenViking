@@ -391,6 +391,7 @@ async def test_http_contract_preserves_retries_and_compile_target_lifecycle(
     # Drive the real task provider explicitly; generation and derived refresh are external work.
     monkeypatch.setattr(external, "get_queue_manager", lambda: SimpleNamespace(enqueue=AsyncMock()))
     _mock_compile_processing(monkeypatch, service)
+    monkeypatch.setattr(service.search, "find", AsyncMock(return_value=SimpleNamespace(total=2)))
     monkeypatch.setattr(service.fs, "_enqueue_copy_refresh", AsyncMock(return_value="queued"))
     monkeypatch.setattr(service.fs, "_enqueue_delete_refresh", AsyncMock(return_value="skipped"))
     monkeypatch.setattr("openviking.service.fs_service.vectorize_directory_meta", AsyncMock())
@@ -480,6 +481,7 @@ async def test_http_contract_preserves_retries_and_compile_target_lifecycle(
     store = service.compile.lifecycle.store
     initial_state = await store.get_by_to(ctx.account_id, target)
     assert initial_state["auto_update"] is False and initial_state["update_schedule"] is None
+    assert initial_state["conflicts_num"] == 2
     first_operation_id = initial_state["initial_operation_id"]
     assert "id" not in initial_state
     with monkeypatch.context() as patch:
@@ -615,7 +617,6 @@ async def test_http_contract_preserves_retries_and_compile_target_lifecycle(
         "error",
         "params",
         "result",
-        "conflicts_num",
         "meta",
     }
     assert all(set(op) == public_fields for op in history["operations"])
@@ -658,7 +659,7 @@ async def test_http_contract_preserves_retries_and_compile_target_lifecycle(
     assert ordinary_operation["meta"] == {}
     assert ordinary_operation["params"] == {"batch": True, "uris": [page]}
     assert ordinary_operation["result"] == {"created": [], "updated": [page], "unchanged": []}
-    assert ordinary_operation["conflicts_num"] == 0
+    assert (await service.compile.get_config(target, ctx))["conflicts_num"] == 2
     ordinary_outputs = await service.compile.operation_outputs(
         target, ordinary_operation["operation_id"], ctx, limit=20, cursor=None
     )

@@ -769,7 +769,6 @@ class CompileService:
                 "finished_at",
                 "params",
                 "result",
-                "conflicts_num",
                 "error",
             )
         } | {
