@@ -62,6 +62,7 @@ from openviking.service.external_task_service import ExternalTaskSnapshot
 from openviking.service.task_tracker_concurrency import KeyedAsyncLockPool, run_to_completion
 from openviking.storage.acl import AclAction
 from openviking.storage.errors import LockAcquisitionError, ResourceBusyError
+from openviking.utils.tags import build_search_tags_filter
 from openviking_cli.exceptions import (
     ConflictError,
     FailedPreconditionError,
@@ -105,7 +106,7 @@ def new_record(to: str) -> Dict[str, Any]:
     return {
         "to": to,
         "compile_type": "compile",  # Compile category for this target.
-        "conflicts_num": 0,  # Number of conflicting files under this target.
+        "conflicts_num": 0,  # Conflicting files found at successful completion, capped at 100.
         "status": "active",
         "deleted_at": None,  # Last deletion Unix time; retained for operation boundary checks.
         "from": [],
@@ -1309,8 +1310,10 @@ class CompileLifecycle:
     async def _finalize_directories(
         self, task: Any, run: Dict[str, Any], ctx: RequestContext
     ) -> None:
-        """Wait for run's reindex and tag task's target directory tree.
-        Incomplete indexes fail; retries reuse the reindex ID and preserve published output.
+        """Finalize task's target tree and set run's indexed conflict-file count (up to 100).
+
+        Incomplete indexes or failed tag queries raise before completion; retries
+        reuse the reindex ID and preserve published output.
         """
         from openviking.server.dependencies import get_service
         from openviking.service.external_task_service import ExternalTaskError
@@ -1328,7 +1331,19 @@ class CompileLifecycle:
                     terminal.error or f"Compile reindex failed: {reindex_id}",
                     transient=False,
                 )
-        await get_service().fs.finalize_compile_directories(task.meta["request"]["to"], ctx)
+        service = get_service()
+        target = task.meta["request"]["to"]
+        await service.fs.finalize_compile_directories(target, ctx)
+        # shortcut: counts stop at 100; add pagination when exact larger totals are needed.
+        conflicts = await service.search.find(
+            query="",
+            ctx=ctx,
+            target_uri=target,
+            limit=100,
+            filter=build_search_tags_filter(["has_conflict=true"]),
+            level=[2],
+        )
+        run["conflicts_num"] = conflicts.total
 
     async def _release(
         self, account_id: str, target_to: str, task: Any, run: Optional[Dict[str, Any]]
@@ -1365,6 +1380,7 @@ class CompileLifecycle:
                     if run["status"] == "completed":
                         first_success = not record["initialized"]
                         record["initialized"] = True
+                        record["conflicts_num"] = run["conflicts_num"]
                         if run_meta.get("head"):
                             progress_key = (
                                 "scheduled_progress"

@@ -1921,7 +1921,7 @@ class FSService:
             ctx=ctx,
             output="original",
             directories_only=True,
-            show_all_hidden=True,
+            show_all_hidden=False,
             node_limit=None,
             level_limit=None,
             include_abstract=False,

@@ -63,4 +63,4 @@ def resolve_manual_conflicts(previous: str, edited: str) -> tuple[str, list[str]
     remaining = list(stored_blocks)
     if remaining:
         result = result.rstrip() + "\n\n" + "\n\n".join(remaining) + "\n"
-    return result, [f"conflict={'true' if unfixed else 'false'}", f"num={unfixed}"]
+    return result, [f"has_conflict={'true' if unfixed else 'false'}", f"num={unfixed}"]
