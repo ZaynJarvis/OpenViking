@@ -324,6 +324,7 @@ class _OpsMixin:
             check_descendant_acl = (
                 is_dir
                 and (not no_vector or is_acl_uri(target_uri))
+                and not self._ctx_or_default(ctx).bypass_acl
                 and await self._acl_enabled(ctx)
             )
             uris_to_delete = (
@@ -719,6 +720,7 @@ class _OpsMixin:
         *,
         vector_mode: Literal["transfer", "delete_source", "none"] = "transfer",
         copy_semantic_sidecars: bool = True,
+        restore_acl: Dict[str, Dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
         """Move file/directory while extending an optional outer pathlock lease.
 
@@ -728,8 +730,6 @@ class _OpsMixin:
 
         old_uri = self._normalize_transfer_uri(old_uri)
         new_uri = self._normalize_transfer_uri(new_uri)
-        acl_manager = self.acl_manager
-        acl_enabled = await self._acl_enabled(ctx)
         guard_ctx = replace(self._ctx_or_default(ctx), bypass_acl=True)
         await self._ensure_access(old_uri, guard_ctx, action=AclAction.MANAGE)
         await self._ensure_access(old_uri, ctx, action=AclAction.WRITE)
@@ -743,7 +743,6 @@ class _OpsMixin:
         old_path = self._uri_to_path(old_uri, ctx=ctx)
         new_path = self._uri_to_path(new_uri, ctx=ctx)
         self._validate_transfer_paths(old_path, new_path)
-        new_acl_scope = acl_enabled and is_acl_uri(new_uri)
 
         # Verify source exists and determine type before locking.
         try:
@@ -837,7 +836,6 @@ class _OpsMixin:
                 raise
 
             # Update or remove source VectorDB records before deleting the source.
-            vector_transfer_completed = False
             try:
                 vector_result = None
                 if vector_mode == "transfer":
@@ -847,34 +845,13 @@ class _OpsMixin:
                         recursive=is_dir,
                         ctx=ctx,
                         **({"source_uris": uris_to_move} if is_dir else {}),
+                        **({"restore_acl": restore_acl} if restore_acl is not None else {}),
                     )
-                    vector_transfer_completed = True
                 elif vector_mode == "delete_source":
                     await self._delete_from_vector_store(uris_to_move, ctx=ctx)
                 elif vector_mode != "none":
                     raise ValueError(f"unsupported move vector mode: {vector_mode}")
-                if vector_mode == "transfer" and acl_manager is not None and new_acl_scope:
-                    await acl_manager.refresh_context_subtree(
-                        new_uri,
-                        self._ctx_or_default(ctx),
-                    )
             except Exception:
-                if vector_transfer_completed:
-                    try:
-                        moved_uris = [
-                            new_scope + uri.rstrip("/")[len(old_scope) :] for uri in uris_to_move
-                        ]
-                        await self._update_vector_store_uris(
-                            new_uri,
-                            old_uri,
-                            recursive=is_dir,
-                            ctx=ctx,
-                            **({"source_uris": moved_uris} if is_dir else {}),
-                        )
-                    except Exception:
-                        logger.warning(
-                            "Failed to restore move vectors for %s", old_uri, exc_info=True
-                        )
                 try:
                     await self._cleanup_transfer_target(
                         new_path, is_dir=is_dir, ctx=ctx, lease_ref=lease
@@ -898,6 +875,7 @@ class _OpsMixin:
                 "files_deleted": files_created,
             }
             if vector_result is not None:
+                result["source_acl"] = vector_result.source_acl
                 result["vectors"] = {
                     "scanned": vector_result.scanned,
                     "written": vector_result.written,

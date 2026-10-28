@@ -182,42 +182,6 @@ class _MemoryTransferBackend(VikingVectorIndexBackend):
         return await self.delete(ids, ctx=ctx)
 
 
-class _TransferAclManager:
-    async def is_enabled(self, account_id: str) -> bool:
-        return account_id == "acct"
-
-    async def materialize_context_records(self, records, ctx):
-        del ctx
-        return [
-            {
-                **record,
-                "acl_mode": "inherit",
-                "acl_direct_grants": [],
-                "acl_inherited_grants": ["1:group:target-readers"],
-            }
-            for record in records
-        ]
-
-    async def materialize_moved_record(self, record, new_uri, ctx):
-        del new_uri, ctx
-        return {
-            "acl_mode": record.get("acl_mode", "inherit"),
-            "acl_direct_grants": list(record.get("acl_direct_grants") or []),
-            "acl_inherited_grants": ["1:group:target-readers"],
-        }
-
-
-class _AclMemoryTransferBackend(_MemoryTransferBackend):
-    def __init__(self, records: list[dict[str, Any]]) -> None:
-        super().__init__(records)
-        self.acl_manager = _TransferAclManager()
-
-    async def upsert_many(
-        self, data_list: list[dict[str, Any]], *, ctx: RequestContext
-    ) -> list[str]:
-        return await VikingVectorIndexBackend.upsert_many(self, data_list, ctx=ctx)
-
-
 def _matches_filter(expr, record: dict[str, Any]) -> bool:
     if expr is None:
         return True
@@ -1716,28 +1680,32 @@ async def test_update_uri_mapping_deletes_source_only_after_targets_exist():
 
 
 @pytest.mark.asyncio
-async def test_update_uri_mapping_preserves_source_direct_acl_on_target():
-    source = "viking://resources/src.md"
-    target = "viking://resources/dst.md"
-    backend = _AclMemoryTransferBackend(
+async def test_update_uri_mapping_preserves_target_acl_and_inherits_new_entries():
+    source, target = "viking://resources/src", "viking://resources/dst"
+    backend = _RealAclMemoryTransferBackend(
         [
+            _record("source", source, acl_mode="restricted", acl_direct_grants=["7:user:alice"]),
             _record(
-                "source",
-                source,
-                acl_mode="restricted",
-                acl_direct_grants=["7:user:alice"],
-                acl_inherited_grants=["1:group:source-readers"],
-            )
+                "source-child", f"{source}/child.md", acl_mode="restricted", acl_direct_grants=[]
+            ),
+            _record("target", target, acl_mode="inherit", acl_direct_grants=["7:user:bob"]),
         ]
     )
 
-    await backend.update_uri_mapping(_ctx(), source, target, recursive=False)
+    result = await backend.update_uri_mapping(_ctx(), source, target, recursive=True)
 
-    moved = _records_under(backend, target, recursive=False)
-    assert len(moved) == 1
-    assert moved[0]["acl_mode"] == "restricted"
-    assert moved[0]["acl_direct_grants"] == ["7:user:alice"]
-    assert moved[0]["acl_inherited_grants"] == ["1:group:target-readers"]
+    moved = sorted(_records_under(backend, target), key=lambda record: record["uri"])
+    assert [record["acl_mode"] for record in moved] == ["inherit", "inherit"]
+    assert [record["acl_direct_grants"] for record in moved] == [["7:user:bob"], []]
+    assert moved[1]["acl_inherited_grants"] == ["7:user:*", "7:user:bob"]
+    assert _records_under(backend, source) == []
+
+    await backend.update_uri_mapping(
+        _ctx(), target, source, recursive=True, restore_acl=result.source_acl
+    )
+    restored = sorted(_records_under(backend, source), key=lambda record: record["uri"])
+    assert [record["acl_direct_grants"] for record in restored] == [["7:user:alice"], []]
+    assert all(record["acl_mode"] == "restricted" for record in restored)
 
 
 @pytest.mark.asyncio
@@ -1764,7 +1732,7 @@ async def test_update_uri_mapping_restores_source_and_removes_target_after_parti
 async def test_update_uri_mapping_rollback_restores_source_direct_acl():
     source = "viking://resources/src"
     target = "viking://resources/dst"
-    backend = _AclMemoryTransferBackend(
+    backend = _RealAclMemoryTransferBackend(
         [
             _record(
                 "source-root",

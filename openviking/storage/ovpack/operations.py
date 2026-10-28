@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import zipfile
+from dataclasses import replace
 from typing import Any, Optional
 
 from openviking.core.namespace import (
@@ -16,7 +17,6 @@ from openviking.core.namespace import (
 )
 from openviking.resource.watch_storage import is_watch_task_control_uri
 from openviking.server.identity import RequestContext
-from openviking.storage.acl import AclAction
 from openviking.storage.index_consistency import check_index_consistency
 from openviking.storage.ovpack.format import (
     OVPACK_BACKUP_NAME,
@@ -70,12 +70,7 @@ from openviking.storage.ovpack.vectors import (
     restore_vector_snapshot,
 )
 from openviking.utils.embedding_utils import vectorize_directory_meta, vectorize_file
-from openviking_cli.exceptions import (
-    ConflictError,
-    InvalidArgumentError,
-    NotFoundError,
-    PermissionDeniedError,
-)
+from openviking_cli.exceptions import ConflictError, InvalidArgumentError, NotFoundError
 from openviking_cli.utils.logger import get_logger
 from openviking_cli.utils.uri import VikingURI
 
@@ -316,14 +311,9 @@ async def import_ovpack(
         index_records = validate_manifest_content(zf, manifest, infolist, base_name)
         dense_vectors = read_dense_vectors(zf, manifest, base_name, index_records)
 
-        # Check import authority without applying MANAGE's namespace-root deletion guard.
-        access = await viking_fs._can_access_many([root_uri], ctx, action=AclAction.MANAGE)
-        if not access[root_uri]:
-            raise PermissionDeniedError(
-                "OVPack import: manage permission required", resource=root_uri
-            )
-
-        existing_roots = [root_uri] if await _root_exists(viking_fs, root_uri, ctx) else []
+        target_exists = await viking_fs._ensure_destination_access(root_uri, ctx)
+        import_ctx = replace(ctx, bypass_acl=True)
+        existing_roots = [root_uri] if target_exists else []
         if existing_roots:
             if conflict_action == "skip":
                 logger.info(f"[ovpack] Skipped existing resource at {root_uri}")
@@ -347,23 +337,23 @@ async def import_ovpack(
                 ctx=ctx,
             )
 
-        if parent != "viking://":
+        if parent != "viking://" and not target_exists:
             await _ensure_parent_exists(viking_fs, parent, ctx)
 
         for existing_root in existing_roots:
             logger.info(f"[ovpack] Overwriting existing resource at {existing_root}")
-            await _remove_existing_root(viking_fs, existing_root, ctx)
+            await _remove_existing_root(viking_fs, existing_root, import_ctx)
 
         for _, safe_zip_path, kind, rel_path in members:
             if kind in {"manifest", "internal"}:
                 continue
             if kind == "directory":
-                await viking_fs.mkdir(join_uri(root_uri, rel_path), exist_ok=True, ctx=ctx)
+                await viking_fs.mkdir(join_uri(root_uri, rel_path), exist_ok=True, ctx=import_ctx)
                 continue
 
             target_file_uri = join_uri(root_uri, rel_path)
             data = zf.read(safe_zip_path)
-            await viking_fs.write_file_bytes(target_file_uri, data, ctx=ctx)
+            await viking_fs.write_file_bytes(target_file_uri, data, ctx=import_ctx)
 
     logger.info(f"[ovpack] Successfully imported {file_path} to {root_uri}")
 
@@ -375,14 +365,14 @@ async def import_ovpack(
                 index_records,
                 dense_vectors,
                 manifest_entries_by_path(manifest),
-                ctx,
+                import_ctx,
             )
             logger.info(f"[ovpack] Restored vector snapshot for: {root_uri}")
         else:
             await _enqueue_direct_vectorization(
                 viking_fs,
                 root_uri,
-                ctx=ctx,
+                ctx=import_ctx,
                 index_records=index_records,
             )
             logger.info(f"[ovpack] Enqueued direct vectorization for: {root_uri}")

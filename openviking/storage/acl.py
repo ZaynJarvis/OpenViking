@@ -462,30 +462,6 @@ class AclManager:
             for record in records
         ]
 
-    async def materialize_moved_record(
-        self, record: Mapping[str, Any], new_uri: str, ctx: RequestContext
-    ) -> dict[str, Any]:
-        if not is_acl_uri(new_uri):
-            return EffectiveAcl(AclMode.NONE, DirectAcl(), DirectAcl()).context_fields()
-        ancestors = acl_ancestors(new_uri)
-        parent = ancestors[-2] if len(ancestors) > 1 else None
-        parent_acl = (
-            await self.resolve(parent, ctx)
-            if parent
-            else EffectiveAcl(AclMode.NONE, DirectAcl(), DirectAcl())
-        )
-        inherited = parent_acl.permissions
-        source_uri = str(record.get("uri") or "")
-        direct = (
-            DirectAcl.from_context_fields(record, "acl_direct")
-            if is_acl_uri(source_uri)
-            else DirectAcl()
-        )
-        mode = self._effective_from_record(record).mode if is_acl_uri(source_uri) else AclMode.NONE
-        return EffectiveAcl.from_permissions(
-            direct, inherited, mode=mode, parent_mode=parent_acl.mode
-        ).context_fields()
-
     async def _apply_subtree(
         self,
         root_uri: str,

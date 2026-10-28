@@ -634,80 +634,6 @@ async def test_mv_keeps_target_when_source_delete_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mv_restores_vectors_before_removing_target_when_acl_refresh_fails(monkeypatch):
-    agfs = _CopyAGFS()
-    fs = _viking_fs(monkeypatch, agfs)
-    source_uri = "viking://resources/source.md"
-    target_uri = "viking://resources/target.md"
-    vector_uris = {source_uri}
-
-    async def move_vectors(old_uri, new_uri, *, recursive, ctx):
-        assert recursive is False
-        assert ctx == _ctx()
-        vector_uris.remove(old_uri)
-        vector_uris.add(new_uri)
-        agfs.events.append(("move-vectors", old_uri, new_uri))
-        return SimpleNamespace(scanned=1, written=1, deleted=1, restored=0, batches=1)
-
-    async def acl_enabled(account_id):
-        return account_id == "acct"
-
-    fs.acl_manager = SimpleNamespace(
-        is_enabled=acl_enabled,
-        refresh_context_subtree=AsyncMock(side_effect=RuntimeError("ACL refresh failed")),
-    )
-    monkeypatch.setattr(fs, "_update_vector_store_uris", move_vectors)
-
-    with pytest.raises(RuntimeError, match="ACL refresh failed"):
-        await fs.mv(source_uri, target_uri, ctx=_ctx())
-
-    assert vector_uris == {source_uri}
-    assert not agfs.target_exists
-    vector_restore_index = agfs.events.index(("move-vectors", target_uri, source_uri))
-    target_cleanup_index = next(
-        index
-        for index, event in enumerate(agfs.events)
-        if event[0:3] == ("rm", "/local/acct/resources/target.md", False)
-    )
-    assert vector_restore_index < target_cleanup_index
-
-
-@pytest.mark.asyncio
-async def test_mv_still_cleans_target_when_vector_restore_after_acl_refresh_fails(monkeypatch):
-    agfs = _CopyAGFS()
-    fs = _viking_fs(monkeypatch, agfs)
-    source_uri = "viking://resources/source.md"
-    target_uri = "viking://resources/target.md"
-    vector_uris = {source_uri}
-
-    async def move_vectors(old_uri, new_uri, *, recursive, ctx):
-        assert recursive is False
-        assert ctx == _ctx()
-        if old_uri == target_uri:
-            raise RuntimeError("vector restore failed")
-        vector_uris.remove(old_uri)
-        vector_uris.add(new_uri)
-        return SimpleNamespace(scanned=1, written=1, deleted=1, restored=0, batches=1)
-
-    async def acl_enabled(account_id):
-        return account_id == "acct"
-
-    fs.acl_manager = SimpleNamespace(
-        is_enabled=acl_enabled,
-        refresh_context_subtree=AsyncMock(side_effect=RuntimeError("ACL refresh failed")),
-    )
-    monkeypatch.setattr(fs, "_update_vector_store_uris", move_vectors)
-
-    with pytest.raises(RuntimeError, match="ACL refresh failed"):
-        await fs.mv(source_uri, target_uri, ctx=_ctx())
-    assert vector_uris == {target_uri}
-    assert not agfs.target_exists
-    assert any(
-        event[0:3] == ("rm", "/local/acct/resources/target.md", False) for event in agfs.events
-    )
-
-
-@pytest.mark.asyncio
 async def test_mv_directory_keeps_target_after_partial_source_delete(monkeypatch):
     agfs = _DirectoryMoveRollbackAGFS()
     fs = _viking_fs(monkeypatch, agfs)
@@ -762,7 +688,9 @@ async def test_mv_returns_diagnostic_transfer_summary(monkeypatch):
         fs,
         "_update_vector_store_uris",
         AsyncMock(
-            return_value=SimpleNamespace(scanned=2, written=2, deleted=2, restored=0, batches=1)
+            return_value=SimpleNamespace(
+                scanned=2, written=2, deleted=2, restored=0, batches=1, source_acl={}
+            )
         ),
     )
 

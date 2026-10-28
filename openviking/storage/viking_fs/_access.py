@@ -245,6 +245,34 @@ class _AccessMixin:
     ) -> None:
         await self._ensure_access_many([uri], ctx, action=action)
 
+    async def _ensure_destination_access(self, uri: str, ctx: Optional[RequestContext]) -> bool:
+        """Authorize move/import destinations and return whether the target exists."""
+        try:
+            stat = await self._async_agfs.stat(self._uri_to_path(uri, ctx=ctx))
+        except Exception as exc:
+            if not is_not_found_error(exc):
+                raise
+            parent = VikingURI(uri).parent
+            if parent is None:
+                raise InvalidArgumentError(f"Destination has no parent: {uri}") from exc
+            checked_uri, action, exists = parent.uri, AclAction.WRITE, False
+        else:
+            checked_uri = uri
+            action = AclAction.MANAGE if stat["isDir"] else AclAction.WRITE
+            exists = True
+
+        # Non-ACL namespaces authorize the target path using their fixed policy.
+        if not is_acl_uri(uri):
+            checked_uri = uri
+        # Capability checks must not apply the namespace-root deletion guard.
+        access = await self._can_access_many([checked_uri], ctx, action=action)
+        if not access[checked_uri]:
+            raise PermissionDeniedError(
+                f"Access denied for {checked_uri}: {action.value} permission required",
+                resource=checked_uri,
+            )
+        return exists
+
     async def _ensure_access_many(
         self,
         uris: Sequence[str],
