@@ -989,7 +989,6 @@ class BotCompileService:
                         root_uri=request.to,
                         operations=rendered.operations,
                         wait=False,
-                        defer_processing=True,
                         edit_source="compile",
                     )
                 except OpenVikingError as exc:
@@ -1187,7 +1186,6 @@ class BotCompileService:
                     operations=rendered.operations,
                     wait=False,
                     skip_conflicts=True,
-                    defer_processing=True,
                     edit_source="compile",
                 )
             conflicts = result.get("conflicts", [])
@@ -1439,12 +1437,7 @@ class BotCompileService:
                     relative_uri_path(target_uri, operation["uri"])
                 )
                 local = temp_root / relative
-                old = local.read_bytes() if local.is_file() else None
-                expected = operation.get("expected_sha256")
-                if (operation["mode"] == "create" and local.exists()) or (
-                    operation["mode"] == "replace"
-                    and (old is None or content_hash(old) != expected)
-                ):
+                if operation["mode"] == "create" and local.exists():
                     raise CompileFailure(
                         "WRITE_CONFLICT", f"Skill file changed: {operation['uri']}", stage="writing"
                     )

@@ -60,8 +60,6 @@ class WriteContentRequest(BaseModel):
     edit_source: Literal["manual", "agent", "compile"] = "manual"
     # Mark this edit as conflict resolution.
     resolve_conflicts: bool = False
-    # The revision describes raw stored bytes; omission preserves unconditional writes.
-    expected_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
 class BatchWriteOperation(BaseModel):
@@ -71,8 +69,6 @@ class BatchWriteOperation(BaseModel):
     content: str | None = None
     content_base64: str | None = None
     mode: Literal["replace", "append", "create", "upsert"] = "replace"
-    # Optional byte revision, checked under the existing file locks before any writes.
-    expected_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     tags: list[str] | None = None
     tag_mode: Literal["replace", "append", "clear"] = "replace"
     acl: AclSpec | None = None
@@ -300,7 +296,6 @@ async def write(
             acl=request.acl,
             edit_source=request.edit_source,
             resolve_conflicts=request.resolve_conflicts,
-            expected_sha256=request.expected_sha256,
         ),
     )
     return Response(

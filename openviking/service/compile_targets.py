@@ -790,7 +790,6 @@ def new_compile_operation(task: Any, record: Dict[str, Any]) -> Dict[str, Any]:
             "target_head": None,
             "snapshot_committed": False,
             "content_changed": False,  # Content changes requiring a finalization timestamp.
-            "reindex_task_id": None,
             "base": None,
             "head": None,
             "changed_roots": [],
@@ -1196,13 +1195,19 @@ class CompileLifecycle:
         }
 
     async def on_finish(self, task: Any, snapshot: ExternalTaskSnapshot) -> ExternalTaskSnapshot:
-        """Commit output, then finish indexing and tags before completing the run.
-        Replay saved snapshot/reindex IDs without publishing duplicate versions.
-        """
+        """Finalize output and versions; return active status on busy locks."""
+        from openviking.server.dependencies import get_service
+        from openviking.service.task_tracker import get_task_tracker
+
         meta, request = task.meta["request"].get("compile"), task.meta["request"]
         if meta is None:
             return snapshot
         account_id = task.account_id
+        tracker = get_task_tracker()
+        if await tracker.is_cancellation_requested(
+            task.task_id, account_id=account_id, user_id=task.user_id
+        ):
+            snapshot = ExternalTaskSnapshot(status="cancelled")
         record = await self._store.get(account_id, request["to"])
         if record is None:
             if snapshot.error_code == "COMPILE_TARGET_STATE_TIMEOUT":
@@ -1218,7 +1223,8 @@ class CompileLifecycle:
                 run_meta = run["meta"]
                 ctx = task_ctx(task.account_id, task.user_id)
                 record = await self._store.get(account_id, request["to"])
-                if not self._task_is_current(record, task):
+                current = self._task_is_current(record, task)
+                if not current:
                     snapshot = ExternalTaskSnapshot(
                         status=run["status"] if run["status"] in TERMINAL else "cancelled",
                         result=run.get("result"),
@@ -1229,110 +1235,106 @@ class CompileLifecycle:
                     if snapshot.status == "failed":
                         run["error"] = snapshot.error_message or snapshot.status
                 elif snapshot.status == "completed":
-                    from openviking.server.dependencies import get_service
-                    from openviking.service.reindex_executor import REINDEX_ENQUEUE_ERROR
-                    from openviking.service.task_tracker import get_task_tracker
-
                     if run["status"] != "committing":
                         run["status"] = "committing"
                         await self._store.put_operation(account_id, target_to, run)
-                    # Reindex can own content locks once versions are durable.
-                    if not run_meta.get("reindex_task_id"):
+                    try:
+                        await get_service().fs.finalize_compile_directories(request["to"], ctx)
                         async with self._locked_output(request["to"], ctx) as lease:
-                            if not run_meta.get("snapshot_committed"):
-                                run_meta["target_head"] = await self._commit(
-                                    [request["to"]],
-                                    f"compile {task.task_id} finish",
-                                    ctx,
-                                    lease_ref=lease,
-                                )
-                                run_meta["snapshot_committed"] = True
-                                await self._store.put_operation(account_id, target_to, run)
-                            head = run_meta["target_head"]
-                            changes = (
-                                await self._fs.diff_paths(
+                            if await tracker.is_cancellation_requested(
+                                task.task_id, account_id=account_id, user_id=task.user_id
+                            ):
+                                raise asyncio.CancelledError()
+
+                            async def publish() -> None:
+                                """Persist snapshot and versions under the output lease."""
+                                if not run_meta.get("snapshot_committed"):
+                                    head = await self._commit(
+                                        [request["to"]],
+                                        f"compile {task.task_id} finish",
+                                        ctx,
+                                        lease_ref=lease,
+                                        wait_busy=False,
+                                    )
+                                    if not head:
+                                        raise FailedPreconditionError(
+                                            "Compile output snapshot is unavailable"
+                                        )
+                                    run_meta["target_head"] = head
+                                    run_meta["snapshot_committed"] = True
+                                    await self._store.put_operation(account_id, target_to, run)
+                                head = run_meta["target_head"]
+                                if not head:
+                                    raise FailedPreconditionError(
+                                        "Compile output snapshot is unavailable"
+                                    )
+                                changes = await self._fs.diff_paths(
                                     dirs=[request["to"]],
                                     base=run_meta["target_base"],
                                     head=head,
                                     ctx=ctx,
                                 )
-                                if head and run_meta["target_base"]
-                                else []
-                            )
-                            run["result"] = dict.fromkeys(_RESULT_KEYS.values(), 0)
-                            for change in changes:
-                                run["result"][_RESULT_KEYS[change["change_type"]]] += 1
+                                run["result"] = dict.fromkeys(_RESULT_KEYS.values(), 0)
+                                for change in changes:
+                                    if is_versioned(change["uri"]):
+                                        run["result"][_RESULT_KEYS[change["change_type"]]] += 1
+                                record = await self._store.get(account_id, request["to"])
+                                await self.versions.record_compile(
+                                    account_id, record, run, head, changes, ctx
+                                )
+                                if (
+                                    any(is_versioned(change["uri"]) for change in changes)
+                                    and (record.get("content_updated_at") or 0) < run["started_at"]
+                                ):
+                                    run_meta["content_changed"] = True
+
                             record = await self._store.get(account_id, request["to"])
-                            await self.versions.record_compile(
-                                account_id, record, run, head, changes, ctx
-                            )
-                            if (
-                                any(is_versioned(change["uri"]) for change in changes)
-                                and (record.get("content_updated_at") or 0) < run["started_at"]
-                            ):
-                                run_meta["content_changed"] = True
-                    reindex_id = run_meta.get("reindex_task_id")
-                    previous = (
-                        await get_task_tracker().get(
-                            reindex_id, account_id=account_id, user_id=task.user_id
-                        )
-                        if reindex_id
-                        else None
-                    )
-                    if reindex_id is None or (
-                        previous is not None and previous.error == REINDEX_ENQUEUE_ERROR
-                    ):
-                        run_meta["reindex_task_id"] = str(uuid4())
-                        await self._store.put_operation(account_id, target_to, run)
-                    await get_service().reindex(
-                        uri=request["to"],
-                        mode="semantic_and_vectors",
-                        force=False,
-                        recursive=True,
-                        wait=False,
-                        ctx=ctx,
-                        task_id=run_meta["reindex_task_id"],
-                    )
-                else:
-                    # Published output survives indexing or tag finalization failures.
+                            current = self._task_is_current(record, task)
+                            if current:
+                                await run_to_completion(publish)
+                            else:
+                                snapshot = ExternalTaskSnapshot(
+                                    status="cancelled", error_message="Compile target was deleted"
+                                )
+                        if await tracker.is_cancellation_requested(
+                            task.task_id, account_id=account_id, user_id=task.user_id
+                        ):
+                            snapshot = ExternalTaskSnapshot(status="cancelled")
+                    except ResourceBusyError as exc:
+                        if not exc.retryable:
+                            raise
+                        return ExternalTaskSnapshot(status="running", stage="committing")
+                if current and snapshot.status in {"failed", "cancelled"}:
                     if run_meta["target_base"] and not run_meta.get("snapshot_committed"):
-                        await self._rollback(request["to"], run, ctx)
+                        try:
+                            await run_to_completion(lambda: self._rollback(request["to"], run, ctx))
+                        except ResourceBusyError as exc:
+                            if not exc.retryable:
+                                raise
+                            return ExternalTaskSnapshot(
+                                status="cancelling",
+                                stage="cancelling",
+                                result=snapshot.result,
+                                error_code=snapshot.error_code,
+                                error_message=snapshot.error_message,
+                            )
                     run["error"] = snapshot.error_message or snapshot.status
                 if snapshot.status == "completed" and run["started_at"] is not None:
-                    await self._finalize_directories(task, run, ctx)
+                    if run["status"] == "completed":
+                        await get_service().fs.finalize_compile_directories(request["to"], ctx)
+                    await self._update_conflicts(task, ctx)
                 run["status"] = snapshot.status
                 run["finished_at"] = time.time()
                 await self._store.put_operation(account_id, target_to, run)
             await self._release(account_id, target_to, task, run)
             return snapshot
 
-    async def _finalize_directories(
-        self, task: Any, run: Dict[str, Any], ctx: RequestContext
-    ) -> None:
-        """Finalize the task's target tree and save its indexed conflict count (up to 100).
-
-        Incomplete indexes or failed tag queries raise before completion; retries
-        reuse the reindex ID and preserve published output.
-        """
+    async def _update_conflicts(self, task: Any, ctx: RequestContext) -> None:
+        """Save the indexed conflict count after publication, capped at 100."""
         from openviking.server.dependencies import get_service
-        from openviking.service.external_task_service import ExternalTaskError
-        from openviking.service.task_tracker import TaskStatus, get_task_tracker
 
-        reindex_id = run["meta"].get("reindex_task_id")
-        if reindex_id:
-            terminal = await get_task_tracker().wait(
-                reindex_id, account_id=task.account_id, user_id=task.user_id
-            )
-            result = terminal.result or {}
-            if terminal.status != TaskStatus.COMPLETED or result.get("failed_records", 0):
-                raise ExternalTaskError(
-                    "COMPILE_INDEX_FAILED",
-                    terminal.error or f"Compile reindex failed: {reindex_id}",
-                    transient=False,
-                )
         service = get_service()
         target = task.meta["request"]["to"]
-        await service.fs.finalize_compile_directories(target, ctx)
         # shortcut: counts stop at 100; add pagination when exact larger totals are needed.
         conflicts = await service.search.find(
             query="",
@@ -1419,7 +1421,11 @@ class CompileLifecycle:
                     run_meta["target_head"] = run_meta["rollback_head"]
                     return
                 head = await self._commit(
-                    [to], f"compile {run_meta['task_id']} rollback point", ctx, lease_ref=lease
+                    [to],
+                    f"compile {run_meta['task_id']} rollback point",
+                    ctx,
+                    lease_ref=lease,
+                    wait_busy=False,
                 )
                 if not head:
                     raise FailedPreconditionError("Compile rollback snapshot is unavailable")
@@ -1447,7 +1453,11 @@ class CompileLifecycle:
                     await self._fs.write_file_bytes(uri, content, ctx=ctx, lease_ref=lease)
                     restored.append(self._fs._uri_to_tree_path(uri, ctx=ctx))
                 rollback_head = await self._commit(
-                    [to], f"compile {run_meta['task_id']} rollback", ctx, lease_ref=lease
+                    [to],
+                    f"compile {run_meta['task_id']} rollback",
+                    ctx,
+                    lease_ref=lease,
+                    wait_busy=False,
                 )
                 if not rollback_head:
                     raise FailedPreconditionError("Compile rollback snapshot is unavailable")
@@ -1475,8 +1485,11 @@ class CompileLifecycle:
         ctx: RequestContext,
         *,
         lease_ref: Optional[Dict[str, Any]] = None,
+        wait_busy: bool = True,
     ) -> Optional[str]:
-        return await commit_snapshot(self._fs, paths, message, ctx, lease_ref=lease_ref)
+        return await commit_snapshot(
+            self._fs, paths, message, ctx, lease_ref=lease_ref, wait_busy=wait_busy
+        )
 
 
 async def retry_git(action: Any) -> Any:

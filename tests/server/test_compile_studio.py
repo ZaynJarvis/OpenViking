@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import time
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -29,20 +30,10 @@ from tests.test_task_tracker import _FakeAgfs
 
 
 def _mock_compile_processing(monkeypatch, service):
-    """Stub reindex completion without changing other task waits."""
-    from openviking.service.task_tracker import get_task_tracker
-
-    tracker = get_task_tracker()
-    original_wait = tracker.wait
-    reindex = AsyncMock(return_value={"status": "accepted"})
-
-    async def wait(task_id, *args, **kwargs):
-        if any(call.kwargs["task_id"] == task_id for call in reindex.await_args_list):
-            return SimpleNamespace(status=TaskStatus.COMPLETED, result={}, error=None)
-        return await original_wait(task_id, *args, **kwargs)
-
-    monkeypatch.setattr(service, "reindex", reindex)
-    monkeypatch.setattr(tracker, "wait", wait)
+    """Stub directory processing and reject reindex."""
+    monkeypatch.setattr(
+        service, "reindex", AsyncMock(side_effect=AssertionError("Unexpected reindex"))
+    )
     monkeypatch.setattr(service.fs, "finalize_compile_directories", AsyncMock())
 
 
@@ -178,8 +169,7 @@ async def test_compile_api_rejects_system_target_without_creating_task(service, 
     owner = {"account_id": ctx.account_id, "user_id": ctx.user.user_id}
     tracker = get_task_tracker()
     before = {
-        task.task_id
-        for task in await tracker.list_tasks(task_type="compile", limit=None, **owner)
+        task.task_id for task in await tracker.list_tasks(task_type="compile", limit=None, **owner)
     }
 
     response = await client.post(
@@ -194,8 +184,7 @@ async def test_compile_api_rejects_system_target_without_creating_task(service, 
     assert response.status_code == 400, response.text
     assert "system namespace" in response.text
     after = {
-        task.task_id
-        for task in await tracker.list_tasks(task_type="compile", limit=None, **owner)
+        task.task_id for task in await tracker.list_tasks(task_type="compile", limit=None, **owner)
     }
     assert after == before
 
@@ -518,26 +507,21 @@ async def test_http_contract_preserves_retries_and_compile_target_lifecycle(
     checkpoint = dict(operation["meta"])
     assert checkpoint["snapshot_committed"] and checkpoint["target_head"]
     assert (checkpoint["skill_snapshot"]["snapshot_id"] is None) == builtin_skill
-    assert checkpoint["reindex_task_id"]
     versions_before_resume = await store.list_version_indexes(ctx.account_id, target)
     operation.update(status="committing", finished_at=None)
     await store.put_operation(ctx.account_id, target, operation)
     resumed_lifecycle = CompileLifecycle(store, service.viking_fs)
     task = await tracker.get(first, **owner)
-    reindex_requests = service.reindex.await_count
     with monkeypatch.context() as patch:
         patch.setattr(resumed_lifecycle, "_commit", AsyncMock())
-        patch.setattr(resumed_lifecycle.versions, "record_compile", AsyncMock())
         resumed = await resumed_lifecycle.on_start(task)
         assert resumed.status == "completed"
         await resumed_lifecycle.on_finish(task, resumed)
         resumed_lifecycle._commit.assert_not_awaited()
-        resumed_lifecycle.versions.record_compile.assert_not_awaited()
     operation = await store.get_operation(ctx.account_id, target, first_operation_id)
     assert operation["status"] == "completed" and operation["finished_at"] is not None
     assert operation["meta"] == checkpoint
-    assert service.reindex.await_count == reindex_requests + 1
-    assert service.reindex.call_args.kwargs["task_id"] == checkpoint["reindex_task_id"]
+    service.reindex.assert_not_awaited()
     assert await store.list_version_indexes(ctx.account_id, target) == versions_before_resume
 
     recovery = await client.get("/api/v1/compile/submissions/compile-initial-key")
@@ -635,7 +619,6 @@ async def test_http_contract_preserves_retries_and_compile_target_lifecycle(
         "base",
         "head",
         "changes",
-        "reindex_task_id",
     }
     assert set(failed_operation["meta"]["changes"]) == {"added", "modified", "deleted"}
     stored_operation = await store.get_operation(
@@ -847,6 +830,141 @@ async def _prepare_compile_task(service, target, ctx):
         created_at=time.time(),
         meta={"request": payload},
     )
+
+
+async def test_compile_publishes_async_file_indexes_and_directory_tags(service, app, monkeypatch):
+    from openviking.service.external_task_service import ExternalTaskSnapshot
+    from openviking.storage.expr import PathScope
+
+    ctx = RequestContext(user=service.user, role=Role.USER)
+    target = "viking://resources/async-compile"
+    await service.viking_fs.write_file("viking://resources/source/source.md", "Source", ctx=ctx)
+    await service.viking_fs.mkdir(f"{target}/child", ctx=ctx)
+    lifecycle = service.compile.lifecycle
+    task = await _prepare_compile_task(service, target, ctx)
+    assert await lifecycle.on_start(task) == "proceed"
+    reindex = AsyncMock(side_effect=AssertionError("Unexpected reindex"))
+    monkeypatch.setattr(service, "reindex", reindex)
+    page = f"{target}/child/page.md"
+    written = await service.fs.batch_write(
+        root_uri=target,
+        operations=[{"uri": page, "content": "Compiled asynchronous content"}],
+        ctx=ctx,
+        wait=False,
+        edit_source="compile",
+    )
+    assert written["semantic_status"] == "queued"
+
+    async def finish():
+        while True:
+            snapshot = await lifecycle.on_finish(task, ExternalTaskSnapshot(status="completed"))
+            if snapshot.status == "completed":
+                return
+            assert snapshot.status == "running"
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(finish(), 10)
+    await service.resources.wait_processed()
+    records = await service.vikingdb_manager.filter(
+        filter=PathScope("uri", target), output_fields=["uri", "level", "search_tags"], ctx=ctx
+    )
+    assert any(record["uri"] == page and record["level"] == 2 for record in records)
+    l0 = {record["uri"]: record for record in records if record["level"] == 0}
+    assert {target, f"{target}/child"} <= l0.keys()
+    assert all("compile_target=true" in l0[uri]["search_tags"] for uri in l0)
+    reindex.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("busy_stage", ["directory", "snapshot"])
+async def test_compile_busy_publication_and_cleanup_retry_without_reindex(
+    service, app, monkeypatch, busy_stage
+):
+    from openviking.service.external_task_service import ExternalTaskSnapshot
+    from openviking.service.task_tracker import get_task_tracker
+    from openviking.storage.errors import ResourceBusyError
+
+    ctx = RequestContext(user=service.user, role=Role.USER)
+    target = "viking://resources/busy-compile"
+    for uri in ("viking://resources/source/source.md", f"{target}/page.md"):
+        await service.viking_fs.write_file(uri, "baseline", ctx=ctx)
+    lifecycle = service.compile.lifecycle
+    task = await _prepare_compile_task(service, target, ctx)
+    assert await lifecycle.on_start(task) == "proceed"
+    await service.viking_fs.write_file(f"{target}/page.md", "output", ctx=ctx)
+    _mock_compile_processing(monkeypatch, service)
+    monkeypatch.setattr(service.viking_fs, "_schedule_restore_reindex_for_paths", AsyncMock())
+    monkeypatch.setattr(service.search, "find", AsyncMock())
+    cancellation = AsyncMock(return_value=False)
+    monkeypatch.setattr(get_task_tracker(), "is_cancellation_requested", cancellation)
+    original_lock = lifecycle._locked_output
+
+    @asynccontextmanager
+    async def busy_lock(*args):
+        raise ResourceBusyError("busy", uri=target)
+        yield
+
+    if busy_stage == "directory":
+        service.fs.finalize_compile_directories.side_effect = ResourceBusyError("L0 is busy")
+    else:
+        monkeypatch.setattr(lifecycle, "_locked_output", busy_lock)
+    completed = ExternalTaskSnapshot(status="completed")
+    for _ in range(4):
+        snapshot = await lifecycle.on_finish(task, completed)
+        assert (snapshot.status, snapshot.stage) == ("running", "committing")
+    monkeypatch.setattr(lifecycle, "_locked_output", busy_lock)
+    cancellation.return_value = True
+    snapshot = await lifecycle.on_finish(task, completed)
+    assert (snapshot.status, snapshot.stage) == ("cancelling", "cancelling")
+    run = await lifecycle.store.get_operation(ctx.account_id, target, compile_operation_id(task))
+    assert run["finished_at"] is None and not run["meta"]["snapshot_committed"]
+    service.search.find.assert_not_awaited()
+    monkeypatch.setattr(lifecycle, "_locked_output", original_lock)
+    assert (await lifecycle.on_finish(task, completed)).status == "cancelled"
+    assert await service.viking_fs.read_file(f"{target}/page.md", ctx=ctx) == "baseline"
+    service.reindex.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_compile_requires_snapshot_and_preserves_published_output(service, app, monkeypatch):
+    from openviking.service.external_task_service import ExternalTaskSnapshot
+    from openviking.service.task_tracker import get_task_tracker
+    from openviking_cli.exceptions import FailedPreconditionError
+
+    ctx = RequestContext(user=service.user, role=Role.USER)
+    target = "viking://resources/finish-snapshot"
+    await service.viking_fs.write_file("viking://resources/source/source.md", "source", ctx=ctx)
+    await service.viking_fs.write_file(f"{target}/page.md", "baseline", ctx=ctx)
+    lifecycle = service.compile.lifecycle
+    task = await _prepare_compile_task(service, target, ctx)
+    assert await lifecycle.on_start(task) == "proceed"
+    await service.viking_fs.write_file(f"{target}/page.md", "output", ctx=ctx)
+    _mock_compile_processing(monkeypatch, service)
+    monkeypatch.setattr(service.search, "find", AsyncMock(return_value=SimpleNamespace(total=0)))
+
+    cancellation = AsyncMock(return_value=False)
+    monkeypatch.setattr(get_task_tracker(), "is_cancellation_requested", cancellation)
+    original_commit = lifecycle._commit
+
+    async def commit(*args, **kwargs):
+        head = await original_commit(*args, **kwargs)
+        cancellation.return_value = True
+        return head
+
+    monkeypatch.setattr(lifecycle, "_commit", commit)
+    with monkeypatch.context() as patch:
+        patch.setattr(lifecycle, "_commit", AsyncMock(return_value=None))
+        with pytest.raises(FailedPreconditionError, match="output snapshot"):
+            await lifecycle.on_finish(task, ExternalTaskSnapshot(status="completed"))
+    run = await lifecycle.store.get_operation(ctx.account_id, target, compile_operation_id(task))
+    assert not run["meta"]["snapshot_committed"] and run["finished_at"] is None
+    snapshot = await lifecycle.on_finish(task, ExternalTaskSnapshot(status="completed"))
+    assert snapshot.status == "cancelled"
+    run = await lifecycle.store.get_operation(ctx.account_id, target, compile_operation_id(task))
+    assert run["meta"]["snapshot_committed"] and run["meta"]["target_head"]
+    assert await service.viking_fs.read_file(f"{target}/page.md", ctx=ctx) == "output"
+    assert run["result"] == {"created": 0, "updated": 1, "deleted": 0}
+    service.reindex.assert_not_awaited()
 
 
 @pytest.mark.asyncio

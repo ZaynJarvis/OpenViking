@@ -4,6 +4,7 @@
 """Tests for content write endpoint."""
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -33,7 +34,7 @@ async def test_set_tags_endpoint_registered(client):
     assert resp.status_code == 405
 
 
-async def test_ensure_directory_index_preserves_content_and_tags(client, service):
+async def test_ensure_directory_index_preserves_content_and_tags(client, service, monkeypatch):
     ctx = RequestContext(user=service.user, role=Role.ROOT)
     uri = "viking://resources/compile"
     await service.viking_fs.mkdir(f"{uri}/child", ctx=ctx)
@@ -48,6 +49,9 @@ async def test_ensure_directory_index_preserves_content_and_tags(client, service
     await service.resources.wait_processed()
     original = await service.viking_fs.read_file(f"{uri}/.abstract.md", ctx=ctx)
     await service.fs.set_tags(uri, ["team=search"], mode="append", recursive=False, ctx=ctx)
+    acquire = AsyncMock(side_effect=AssertionError("Complete directory indexes need no tree lock"))
+    monkeypatch.setattr(service.viking_fs._async_agfs, "pathlock_acquire_tree", acquire)
+    await service.fs.finalize_compile_directories(uri, ctx)
     await service.fs.finalize_compile_directories(uri, ctx)
     assert await service.viking_fs.read_file(f"{uri}/.abstract.md", ctx=ctx) == original
     records = await service.vikingdb_manager.filter(
@@ -61,6 +65,45 @@ async def test_ensure_directory_index_preserves_content_and_tags(client, service
     )
     assert any(
         record["uri"] == uri and "team=search" in record["search_tags"] for record in records
+    )
+    assert all(
+        (record.get("search_tags") or []).count("compile_target=true") <= 1 for record in records
+    )
+
+
+@pytest.mark.parametrize("concurrent_abstract", [None, "Concurrent abstract"])
+async def test_compile_directory_adds_missing_l0_under_lock(
+    service, app, monkeypatch, concurrent_abstract
+):
+    ctx = RequestContext(user=service.user, role=Role.USER)
+    uri = "viking://resources/compile-overview"
+    await service.viking_fs.mkdir(uri, ctx=ctx)
+    await service.viking_fs.write_file(f"{uri}/.overview.md", "Existing overview", ctx=ctx)
+    ensured = await service.fs.ensure_directory_index(uri, ctx, "Fallback")
+    assert ensured["indexed_levels"] == [1] and not ensured["created_abstract"]
+    await service.fs.set_tags(uri, ["team=search"], mode="append", recursive=False, ctx=ctx)
+    original_acquire = service.viking_fs._async_agfs.pathlock_acquire_tree
+
+    async def acquire_with_summary(path):
+        lease = await original_acquire(path)
+        if concurrent_abstract is not None:
+            await service.viking_fs.write_file(
+                f"{uri}/.abstract.md", concurrent_abstract, ctx=ctx, lease_ref=lease
+            )
+        return lease
+
+    acquire = AsyncMock(side_effect=acquire_with_summary)
+    monkeypatch.setattr(service.viking_fs._async_agfs, "pathlock_acquire_tree", acquire)
+    await service.fs.finalize_compile_directories(uri, ctx)
+    acquire.assert_awaited_once()
+    assert await service.viking_fs.read_file(f"{uri}/.overview.md", ctx=ctx) == "Existing overview"
+    abstract = await service.viking_fs.read_file(f"{uri}/.abstract.md", ctx=ctx)
+    assert (concurrent_abstract or "This is the compile generated folder") in abstract
+    records = await service.fs._directory_index_records(uri, ctx)
+    assert {record["level"] for record in records} == {0, 1}
+    assert all("compile_target=true" in record["search_tags"] for record in records)
+    assert "team=search" in next(
+        record["search_tags"] for record in records if record["level"] == 1
     )
 
 

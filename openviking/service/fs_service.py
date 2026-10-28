@@ -7,7 +7,6 @@ Provides file system operations: ls, mkdir, rm, mv, tree, stat, read, abstract, 
 """
 
 import asyncio
-import hashlib
 from collections.abc import Coroutine
 from dataclasses import dataclass
 from functools import partial
@@ -35,10 +34,11 @@ from openviking.resource.uri_mutation_coordinator import UriMutationCoordinator
 from openviking.resource.watch_storage import is_watch_task_control_uri
 from openviking.server.error_mapping import is_not_found_error
 from openviking.server.identity import RequestContext
-from openviking.service.task_tracker import get_task_tracker, run_tracked_operation
+from openviking.service.task_tracker import TaskStatus, get_task_tracker, run_tracked_operation
 from openviking.service.task_tracker_concurrency import run_to_completion
 from openviking.service.task_work_index import (
     bind_task_context,
+    detach_task_context,
     get_enqueued_work_ids,
     get_task_context,
 )
@@ -963,9 +963,7 @@ class FSService:
             target_stat = await viking_fs.stat(to_uri, ctx=ctx, skip_count=True)
             target_is_dir = bool(target_stat.get("isDir"))
             rebuild_root_uri = (
-                to_uri
-                if target_is_dir
-                else self._semantic_refresh_parent_uri(to_uri, context_type)
+                to_uri if target_is_dir else self._semantic_refresh_parent_uri(to_uri, context_type)
             )
             if not rebuild_root_uri:
                 result["semantic_status"] = "skipped"
@@ -1102,9 +1100,7 @@ class FSService:
             target_is_dir = bool(target_stat.get("isDir"))
             context_type = context_type_for_uri(to_uri)
             rebuild_root_uri = (
-                to_uri
-                if target_is_dir
-                else self._semantic_refresh_parent_uri(to_uri, context_type)
+                to_uri if target_is_dir else self._semantic_refresh_parent_uri(to_uri, context_type)
             )
             if rebuild_root_uri:
                 try:
@@ -1414,29 +1410,6 @@ class FSService:
         sliced = lines[offset:] if limit == -1 else lines[offset : offset + limit]
         return "".join(sliced)
 
-    async def read_visible_with_revision(self, uri: str, ctx: RequestContext) -> tuple[str, str]:
-        """Return visible text and the SHA-256 of the same stored bytes for conditional edits.
-
-        Raw bytes are read once with normal read access and Privacy size limits;
-        memory metadata and private values stay hidden in the returned text.
-        """
-        viking_fs = self._ensure_initialized()
-        resolved_uri = await self._resolve_uri(uri, ctx)
-        max_bytes = (
-            self._privacy_sanitizer.max_content_bytes
-            if self._privacy_sanitizer is not None
-            else None
-        )
-        try:
-            raw = await viking_fs.read_file_bytes(resolved_uri, ctx=ctx, max_bytes=max_bytes)
-        except NotFoundError:
-            if "%20" not in resolved_uri:
-                raise
-            resolved_uri = validate_safe_viking_uri_path(resolved_uri.replace("%20", " "))
-            raw = await viking_fs.read_file_bytes(resolved_uri, ctx=ctx, max_bytes=max_bytes)
-        content = await self._make_content_visible(resolved_uri, viking_fs._decode_bytes(raw), ctx)
-        return content, hashlib.sha256(raw).hexdigest()
-
     async def _make_content_visible(self, uri: str, content: str, ctx: RequestContext) -> str:
         """Hide memory metadata and sanitize private values in already-read text."""
         if classify_uri(uri).is_memory:
@@ -1595,15 +1568,12 @@ class FSService:
         tag_mode: str = "replace",
         acl: AclSpec | Dict[str, Any] | None = None,
         edit_source: Literal["manual", "agent", "compile"] = "manual",
-        record_version: bool = True,
         commit_content: Optional[Callable[..., Awaitable[Any]]] = None,
-        expected_sha256: str | None = None,
         resolve_conflicts: bool = False,
     ) -> Dict[str, Any]:
         """Write content and refresh it after persisting managed output versions.
 
         Internal restores supply ``commit_content`` to record their own version.
-        Byte-revision conditions are checked under the content lease.
         resolve_conflicts enables manual conflict resolution.
         """
         viking_fs = self._ensure_initialized()
@@ -1612,7 +1582,7 @@ class FSService:
                 self.compile_versions.record_write,
                 ctx=ctx,
                 edit_source=edit_source,
-                record_version=record_version and edit_source != "compile",
+                record_version=edit_source != "compile",
             )
         coordinator = ContentWriteCoordinator(
             viking_fs=viking_fs,
@@ -1631,7 +1601,6 @@ class FSService:
             tags=tags,
             tag_mode=tag_mode,
             acl=acl,
-            expected_sha256=expected_sha256,
             resolve_conflicts=resolve_conflicts,
         )
         if self.compile_versions is None or edit_source == "compile":
@@ -1743,6 +1712,20 @@ class FSService:
         """Preserve summaries; create fallback L0 only when both are absent.
         Return readable levels with wait=True, otherwise queued work; invalid summaries fail.
         """
+        return await self._ensure_directory_index(uri, ctx, fallback_abstract, wait=wait)
+
+    async def _ensure_directory_index(
+        self,
+        uri: str,
+        ctx: RequestContext,
+        fallback_abstract: str,
+        wait: bool = True,
+        *,
+        require_abstract: bool = False,
+    ) -> Dict[str, Any]:
+        """Index required summaries, rechecking missing content/indexes under the parent lock.
+        Return index state; busy locks or invalid summaries raise.
+        """
         viking_fs = self._ensure_initialized()
         uri = validate_safe_viking_uri_path(uri)
         self._reject_storage_internal_target(uri)
@@ -1758,12 +1741,45 @@ class FSService:
         if not (await viking_fs.stat(uri, ctx=ctx, skip_count=True)).get("isDir"):
             raise InvalidArgumentError(f"directory index target must be a directory: {uri}")
 
+        async def read_summaries() -> Dict[int, str]:
+            """Read and validate existing sidecars by level."""
+            summaries: Dict[int, str] = {}
+            names = [".abstract.md"] if require_abstract else [".abstract.md", ".overview.md"]
+            for level, name in enumerate(names):
+                try:
+                    raw = await viking_fs.read_file(f"{uri}/{name}", ctx=ctx)
+                except Exception as exc:
+                    if is_not_found_error(exc):
+                        continue
+                    raise
+                try:
+                    body = body_for_preview(raw)
+                except AbstractOverviewFormatError as exc:
+                    raise InvalidArgumentError(
+                        f"Invalid directory summary {uri}/{name}: {exc}"
+                    ) from exc
+                if not body.strip():
+                    raise InvalidArgumentError(f"Directory summary is empty: {uri}/{name}")
+                summaries[level] = raw
+            return summaries
+
         async def execute() -> Dict[str, Any]:
             context = get_task_context()
             assert context is not None
             with bind_task_context(
                 context.task_id, context.account_id, context.user_id, enqueued_work=[]
             ):
+                summaries = await read_summaries()
+                records = await self._directory_index_records(uri, ctx)
+                indexed = {record["level"] for record in records}
+                required = {0} if require_abstract else set(summaries)
+                if required and required <= summaries.keys() & indexed:
+                    return {
+                        "uri": uri,
+                        "created_abstract": False,
+                        "indexed_levels": sorted(required),
+                        "vector_status": "complete",
+                    }
                 guard = PathLockGuard(viking_fs._async_agfs)
                 try:
                     # Lock the parent to avoid recreating a deleted target.
@@ -1784,24 +1800,8 @@ class FSService:
                             f"directory index target must be a directory: {uri}"
                         )
                     await viking_fs._ensure_access(uri, ctx, action=AclAction.WRITE)
-                    summaries: Dict[int, str] = {}
-                    for level, name in ((0, ".abstract.md"), (1, ".overview.md")):
-                        try:
-                            raw = await viking_fs.read_file(f"{uri}/{name}", ctx=ctx)
-                        except Exception as exc:
-                            if is_not_found_error(exc):
-                                continue
-                            raise
-                        try:
-                            body = body_for_preview(raw)
-                        except AbstractOverviewFormatError as exc:
-                            raise InvalidArgumentError(
-                                f"Invalid directory summary {uri}/{name}: {exc}"
-                            ) from exc
-                        if not body.strip():
-                            raise InvalidArgumentError(f"Directory summary is empty: {uri}/{name}")
-                        summaries[level] = raw
-                    created_abstract = not summaries
+                    summaries = await read_summaries()
+                    created_abstract = 0 not in summaries if require_abstract else not summaries
                     if created_abstract:
                         summaries[0] = render_abstract_overview(
                             ContextLevel.ABSTRACT,
@@ -1819,7 +1819,8 @@ class FSService:
                         )
                     records = await self._directory_index_records(uri, ctx)
                     indexed = {record["level"] for record in records}
-                    missing = summaries.keys() - indexed
+                    required = {0} if require_abstract else set(summaries)
+                    missing = required - indexed
                     if created_abstract:
                         missing.add(0)
                         indexed.discard(0)
@@ -1852,14 +1853,14 @@ class FSService:
                             record["level"]
                             for record in await self._directory_index_records(uri, ctx)
                         }
-                        if summaries.keys() - indexed:
+                        if required - indexed:
                             raise OpenVikingError(
                                 f"Directory index is not readable: {uri}", code="PROCESSING_ERROR"
                             )
                     result = {
                         "uri": uri,
                         "created_abstract": created_abstract,
-                        "indexed_levels": sorted(summaries.keys() & indexed),
+                        "indexed_levels": sorted(required & indexed),
                         "vector_status": "queued" if missing and not wait else "complete",
                     }
                     if missing and not wait:
@@ -1911,8 +1912,8 @@ class FSService:
         return result
 
     async def finalize_compile_directories(self, uri: str, ctx: RequestContext) -> Dict[str, Any]:
-        """Index and tag uri's directory tree, preserving summaries and other tags.
-        Return directory_count; denied paths or incomplete writes raise.
+        """Ensure indexed L0 and append tags; return directory_count.
+        Denied paths or incomplete indexing raise.
         """
         viking_fs = self._ensure_initialized()
         uri = validate_safe_viking_uri_path(uri)
@@ -1935,12 +1936,28 @@ class FSService:
         )
         await viking_fs._ensure_access_many(directories, ctx, action=AclAction.WRITE)
         for directory in directories:
-            ensured = await self.ensure_directory_index(
-                directory,
-                ctx,
-                fallback_abstract="This is the compile generated folder",
-                wait=True,
-            )
+            # The directory job retains its lease; Compile's wait stays cancellable.
+            with detach_task_context():
+                ensured = await run_to_completion(
+                    lambda directory=directory: self._ensure_directory_index(
+                        directory,
+                        ctx,
+                        fallback_abstract="This is the compile generated folder",
+                        wait=False,
+                        require_abstract=True,
+                    )
+                )
+            if ensured["vector_status"] == "queued":
+                terminal = await get_task_tracker().wait(
+                    ensured["task_id"], account_id=ctx.account_id, user_id=ctx.user.user_id
+                )
+                if terminal.status != TaskStatus.COMPLETED:
+                    raise OpenVikingError(
+                        terminal.error or f"Directory index processing failed: {directory}",
+                        code="PROCESSING_ERROR",
+                    )
+                ensured = terminal.result or {}
+                ContentWriteCoordinator._raise_refresh_errors(ensured.get("queue_status", {}))
             await self.set_tags(
                 directory, ["compile_target=true"], mode="append", recursive=False, ctx=ctx
             )

@@ -782,7 +782,6 @@ class CompileService:
                     "base",
                     "head",
                     "changes",
-                    "reindex_task_id",
                 )
                 if key in operation["meta"]
             },
@@ -858,7 +857,6 @@ class CompileService:
                 body,
                 ctx,
                 edit_source="compile",
-                record_version=False,
                 commit_content=commit_content,
             )
 

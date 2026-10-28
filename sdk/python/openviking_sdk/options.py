@@ -96,8 +96,6 @@ class UpdateSkillOptions(AddSkillOptions, total=False):
 
 
 class WriteOptions(_ExtraOptions, total=False):
-    # Compare the raw stored byte revision before writing.
-    expected_sha256: str
     edit_source: Literal["manual", "agent", "compile"]
     acl: Dict[str, Any]
     telemetry: Any
