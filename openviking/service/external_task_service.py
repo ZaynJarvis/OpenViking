@@ -399,7 +399,11 @@ class ExternalTaskService:
                     return False
                 if isinstance(started, ExternalTaskSnapshot):
                     finished = await self._apply_snapshot(
-                        started, task_id=task_id, account_id=account_id, user_id=user_id
+                        started,
+                        task_id=task_id,
+                        account_id=account_id,
+                        user_id=user_id,
+                        auth=auth,
                     )
                     if not finished:
                         await asyncio.sleep(provider.poll_interval_seconds)
@@ -466,6 +470,7 @@ class ExternalTaskService:
                 task_id=task_id,
                 account_id=account_id,
                 user_id=user_id,
+                auth=auth,
             ):
                 return
             await asyncio.sleep(provider.poll_interval_seconds)
@@ -590,6 +595,7 @@ class ExternalTaskService:
                 task_id=task_id,
                 account_id=account_id,
                 user_id=user_id,
+                auth=auth,
             ):
                 await asyncio.sleep(self._provider(task.task_type).poll_interval_seconds)
             return
@@ -602,6 +608,7 @@ class ExternalTaskService:
             external_task_id=str(auth.get("external_task_id") or "").strip() or None,
             account_id=account_id,
             user_id=user_id,
+            auth=auth,
             failure=outcome if failure is not None else None,
         )
 
@@ -624,8 +631,13 @@ class ExternalTaskService:
         task_id: str,
         account_id: str,
         user_id: str,
+        auth: dict[str, Any],
     ) -> bool:
-        """Apply state; return False while execution or finalization is active."""
+        """Apply state; return False while execution or finalization is active.
+
+        ``auth`` is this delivery's private Task auth snapshot. Its cleanup
+        failure marker changes only after the matching patch is persisted.
+        """
         tracker = get_task_tracker()
         task = await tracker.get(task_id, account_id=account_id, user_id=user_id)
         if snapshot.stage is not None or snapshot.meta:
@@ -661,23 +673,21 @@ class ExternalTaskService:
             if on_finish is not None:
                 # Persist failure intent before a deferred rollback.
                 if snapshot.status == "failed":
-                    await run_to_completion(
-                        lambda: tracker.patch_task(
-                            task_id,
-                            TaskPatch(
-                                auth={
-                                    "external_cleanup_failure": {
-                                        "code": snapshot.error_code or "UNKNOWN",
-                                        "message": sanitize_error(
-                                            snapshot.error_message or "External task failed"
-                                        ),
-                                    }
-                                }
-                            ),
-                            account_id=account_id,
-                            user_id=user_id,
+                    cleanup_failure = {
+                        "code": snapshot.error_code or "UNKNOWN",
+                        "message": sanitize_error(snapshot.error_message or "External task failed"),
+                    }
+                    if auth.get("external_cleanup_failure") != cleanup_failure:
+                        result = await run_to_completion(
+                            lambda: tracker.patch_task(
+                                task_id,
+                                TaskPatch(auth={"external_cleanup_failure": cleanup_failure}),
+                                account_id=account_id,
+                                user_id=user_id,
+                            )
                         )
-                    )
+                        if result.is_applied:
+                            auth["external_cleanup_failure"] = cleanup_failure
                 if task.task_type == "compile":
                     # Protect finite commits while keeping L0 waits cancellable.
                     snapshot = await on_finish(task, snapshot)
@@ -743,8 +753,10 @@ class ExternalTaskService:
         external_task_id: str | None,
         account_id: str,
         user_id: str,
+        auth: dict[str, Any],
         failure: ExternalTaskSnapshot | None = None,
     ) -> None:
+        """Cancel provider work and finalize it using this delivery's auth snapshot."""
         max_attempts = provider.poll_max_attempts
         # Returning allows QueueFS to ACK the work and finalize cancellation.
         # Keep ownership until the provider confirms a terminal state.
@@ -781,6 +793,7 @@ class ExternalTaskService:
                 task_id=ov_task_id,
                 account_id=account_id,
                 user_id=user_id,
+                auth=auth,
             ):
                 return
             await asyncio.sleep(provider.poll_interval_seconds)
