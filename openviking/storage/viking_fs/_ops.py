@@ -7,7 +7,7 @@ import math
 import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from openviking.core.context import ContextLevel
 from openviking.core.namespace import (
@@ -1584,7 +1584,6 @@ class _OpsMixin:
             entries,
             field="abstract",
             limit=abs_limit,
-            reader=self._read_abstract_for_known_dir,
             fallback="[.abstract.md is not ready]",
             ctx=ctx,
         )
@@ -1600,7 +1599,6 @@ class _OpsMixin:
             entries,
             field="overview",
             limit=overview_limit,
-            reader=self.overview,
             fallback="[.overview.md is not ready]",
             ctx=ctx,
         )
@@ -1609,9 +1607,8 @@ class _OpsMixin:
         self,
         entries: List[Dict[str, Any]],
         *,
-        field: str,
+        field: Literal["abstract", "overview"],
         limit: int,
-        reader: Callable[..., Awaitable[str]],
         fallback: str,
         ctx: Optional[RequestContext] = None,
     ) -> None:
@@ -1642,7 +1639,7 @@ class _OpsMixin:
                     cursor += 1
 
                 try:
-                    summary = await reader(entry["uri"], ctx=ctx)
+                    summary = await self._read_directory_summary(entry["uri"], field, ctx=ctx)
                 except Exception:
                     summary = fallback
 
