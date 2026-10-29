@@ -650,6 +650,7 @@ class CompileService:
             "status": record["status"],
             "to": record["to"],
             "initialized": record["initialized"],
+            "initial_actor": record.get("initial_actor"),
             "from": record["from"],
             "skill": record["skill"],
             "instruction": record["instruction"],
