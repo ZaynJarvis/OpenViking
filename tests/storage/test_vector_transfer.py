@@ -1367,12 +1367,14 @@ async def test_uri_mapping_source_uris_limits_source_and_target_replacement_scop
 
 
 @pytest.mark.asyncio
-async def test_copy_over_private_target_preserves_target_acl():
+async def test_copy_preserves_target_acl_even_when_enforcement_is_disabled():
     source = "viking://resources/src.md"
     target = "viking://resources/dst.md"
     backend = _RealAclMemoryTransferBackend(
         [
-            _record("source-file", source),
+            _record(
+                "source-file", source, acl_mode="restricted", acl_direct_grants=["7:user:alice"]
+            ),
             _record("source-chunk", f"{source}#chunk_0001"),
             _record(
                 "target-file",
@@ -1382,6 +1384,10 @@ async def test_copy_over_private_target_preserves_target_acl():
                 acl_inherited_grants=[],
             ),
         ]
+    )
+
+    backend.acl_manager._runtime_config.get_account = AsyncMock(
+        return_value=SimpleNamespace(enabled=False)
     )
 
     await backend.copy_uri_mapping(_ctx(), source, target, recursive=False)
@@ -1498,8 +1504,16 @@ async def test_copy_directory_preserves_root_acl_and_inherits_it_to_new_entries(
     root_acl = ["7:user:bob"]
     backend = _RealAclMemoryTransferBackend(
         [
-            _record("source-root", source, level=0),
-            _record("source-child", source_child, level=0),
+            _record(
+                "source-root",
+                source,
+                level=0,
+                acl_mode="restricted",
+                acl_direct_grants=["7:user:alice"],
+            ),
+            _record(
+                "source-child", source_child, level=0, acl_mode="restricted", acl_direct_grants=[]
+            ),
             _record("source-file", source_file),
             _record(
                 "target-root",

@@ -246,7 +246,7 @@ class _AccessMixin:
         await self._ensure_access_many([uri], ctx, action=action)
 
     async def _ensure_destination_access(self, uri: str, ctx: Optional[RequestContext]) -> bool:
-        """Authorize move/import destinations and return whether the target exists."""
+        """Authorize copy/move/import destinations and return whether the target exists."""
         try:
             stat = await self._async_agfs.stat(self._uri_to_path(uri, ctx=ctx))
         except Exception as exc:

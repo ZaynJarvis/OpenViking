@@ -2753,7 +2753,6 @@ class VikingVectorIndexBackend:
         *,
         recursive: bool,
         source_uris: List[str] | None,
-        preserve_target_acl: bool = False,
         target_entry_exists: Callable[[str], Awaitable[bool]] | None = None,
     ) -> tuple[List[Dict[str, Any]], int, Dict[str, Dict[str, Any]]]:
         """Read selected source records and remove affected target records."""
@@ -2810,9 +2809,8 @@ class VikingVectorIndexBackend:
                 )
         # A chunk cannot carry ACL for its base file URI. Keep the old main record
         # when copy has no main record to replace it, accepting its stale content.
-        preserve_target_acl = preserve_target_acl and self.acl_manager is not None
         preserved_acl_uris: set[str] = set()
-        if preserve_target_acl:
+        if self.acl_manager is not None:
             written_uris = {
                 rewrite_transfer_uri(str(record["uri"]), source_uri, target_uri)
                 for record in source_records
@@ -2844,8 +2842,7 @@ class VikingVectorIndexBackend:
             ):
                 affected_target_ids.append(str(record["id"]))
         target_acl_fields: Dict[str, Dict[str, Any]] = {}
-        if preserve_target_acl and replacement_target_uris:
-            assert self.acl_manager is not None
+        if self.acl_manager is not None and replacement_target_uris:
             acl_target_uris = {uri for uri in replacement_target_uris if is_acl_uri(uri)}
             target_acl_fields = {
                 uri: effective.context_fields()
@@ -2878,7 +2875,6 @@ class VikingVectorIndexBackend:
             recursive=recursive,
             source_uris=source_uris,
             target_entry_exists=target_entry_exists,
-            preserve_target_acl=await self._acl_enabled(ctx),
         )
         result = VectorTransferResult(scanned=len(source_records), batches=batches)
         timestamp = get_current_timestamp()
@@ -2960,7 +2956,6 @@ class VikingVectorIndexBackend:
             recursive=recursive,
             source_uris=source_uris,
             target_entry_exists=target_entry_exists,
-            preserve_target_acl=True,
         )
         result = VectorTransferResult(
             scanned=len(source_records),
@@ -2989,9 +2984,6 @@ class VikingVectorIndexBackend:
                 mode="move",
                 timestamp=timestamp,
             )
-            payload = {
-                key: value for key, value in payload.items() if key not in ACL_CONTEXT_FIELDS
-            }
             acl_fields = target_acl_fields.get(
                 self._vector_entry_uri(str(payload["uri"]), target_acl_fields)
             )

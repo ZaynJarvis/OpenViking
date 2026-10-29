@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -10,7 +11,7 @@ import pytest
 
 from openviking.server.identity import RequestContext, Role
 from openviking.storage.abstract_overview import parse_abstract_overview
-from openviking.storage.acl import AclAction
+from openviking.storage.acl import AclEntry, AclLevel, AclMode, DirectAcl, EffectiveAcl
 from openviking.storage.viking_fs import VikingFS
 from openviking_cli.exceptions import (
     InvalidArgumentError,
@@ -295,7 +296,7 @@ async def test_cp_file_uses_exact_locks_agfs_copy_then_vector_copy(monkeypatch):
         "viking://resources/source.md",
         "viking://resources/target.md",
         recursive=False,
-        ctx=_ctx(),
+        ctx=replace(_ctx(), bypass_acl=True),
     )
     assert agfs.events[-1] == ("release", agfs.operation_lease)
 
@@ -375,7 +376,7 @@ async def test_cp_directory_preserves_empty_hidden_and_binary_entries(monkeypatc
         "viking://resources/source",
         "viking://resources/target",
         recursive=True,
-        ctx=_ctx(),
+        ctx=replace(_ctx(), bypass_acl=True),
         source_uris=[
             "viking://resources/source",
             "viking://resources/source/.hidden",
@@ -818,35 +819,51 @@ async def test_transfer_rejects_target_ancestor(monkeypatch, operation):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["cp", "mv"])
-@pytest.mark.parametrize("child", ["data.bin", "tasks/private.txt", "_system/private.txt"])
-async def test_transfer_checks_child_target_write_permission_before_copy(
-    monkeypatch, operation, child
-):
+@pytest.mark.parametrize("permission", ["source_denied", "target_write", "target_manage"])
+async def test_cp_requires_readable_source_and_manage_for_directory_merge(permission):
+    source, target = "viking://resources/source", "viking://resources/target"
     agfs = _DirectoryCopyAGFS()
     agfs.directories.add("/local/acct/resources/target")
-    if "/" in child:
-        name = child.split("/")[0]
-        agfs.directories.update(
-            {f"/local/acct/resources/source/{name}", f"/local/acct/resources/target/{name}"}
-        )
-    agfs.files[f"/local/acct/resources/source/{child}"] = b"new"
-    agfs.files[f"/local/acct/resources/target/{child}"] = b"protected"
-    fs = _viking_fs(monkeypatch, agfs)
+    agfs.files["/local/acct/resources/target/data.bin"] = b"old"
+    agfs.files["/local/acct/resources/target/only.txt"] = b"keep"
+    denied = EffectiveAcl(AclMode.RESTRICTED, DirectAcl(), DirectAcl())
+    readable = EffectiveAcl(
+        AclMode.RESTRICTED, DirectAcl((AclEntry("user:alice", AclLevel.READ),)), DirectAcl()
+    )
+    target_level = AclLevel.WRITE if permission == "target_write" else AclLevel.MANAGE
+    target_acl = EffectiveAcl(
+        AclMode.RESTRICTED, DirectAcl((AclEntry("user:alice", target_level),)), DirectAcl()
+    )
 
-    async def ensure_access(uri, ctx, *, action=AclAction.READ):
-        if uri == f"viking://resources/target/{child}" and action == AclAction.WRITE:
-            raise PermissionDeniedError("protected child", resource=uri)
+    async def resolve_many(uris, ctx):
+        return {
+            uri: target_acl
+            if uri == target
+            else readable
+            if uri.startswith(source)
+            and not (permission == "source_denied" and uri.endswith("data.bin"))
+            else denied
+            for uri in uris
+        }
 
-    monkeypatch.setattr(fs, "_ensure_access", ensure_access)
+    acl = SimpleNamespace(is_enabled=AsyncMock(return_value=True), resolve_many=resolve_many)
+    fs = VikingFS(agfs=SimpleNamespace(), acl_manager=acl)
+    fs._async_agfs = agfs
     before = dict(agfs.files)
-    kwargs = {"recursive": True} if operation == "cp" else {}
-    with pytest.raises(PermissionDeniedError, match="protected child"):
-        await getattr(fs, operation)(
-            "viking://resources/source", "viking://resources/target", ctx=_ctx(), **kwargs
+    ctx = _user_ctx()
+    if permission == "target_manage":
+        await fs.cp(source, target, recursive=True, ctx=ctx)
+        assert agfs.files["/local/acct/resources/target/data.bin"] == b"\x00\xff"
+        assert agfs.files["/local/acct/resources/target/only.txt"] == b"keep"
+        assert all(
+            agfs.files[path] == content for path, content in before.items() if "/source/" in path
         )
-    assert agfs.files == before
-    assert not any(event[0] in {"cp", "rm"} for event in agfs.events)
+        assert not ctx.bypass_acl
+    else:
+        with pytest.raises(PermissionDeniedError):
+            await fs.cp(source, target, recursive=True, ctx=ctx)
+        assert agfs.files == before
+        assert not any(event[0] == "cp" for event in agfs.events)
 
 
 @pytest.mark.asyncio

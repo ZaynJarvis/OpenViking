@@ -97,7 +97,7 @@ All filesystem APIs use the same permission mapping:
 | delete or move a file | manage |
 | delete or move a directory | manage on that directory, authorizing its entire subtree including restricted descendants |
 | manage ACL | manage |
-| move destination | write on the parent for a new path; write on an existing file; manage on an existing directory |
+| copy or move destination | write on the parent for a new path; write on an existing file; manage on an existing directory |
 
 The server canonicalizes the URI, then uses one authorization entry point for account/owner/actor-peer boundaries, effective ACLs when enabled or existing namespace rules when disabled, and write/delete namespace guards.
 
@@ -107,9 +107,9 @@ inside a restricted directory only inherits the parent’s permissions.
 
 An ACL grant on a directory is inherited by every descendant. `list`, `tree`, and other batch results still check every returned node because an open directory can contain independently restricted descendants.
 
-Moves do not carry source ACLs: existing destinations retain their ACLs, new destinations inherit their destination parent’s ACL, and private destinations have no ACL.
+Copies and moves do not carry source ACLs: existing destinations retain their ACLs, new destinations inherit their destination parent’s ACL, and private destinations have no ACL.
 
-Delete and move check permissions at the operation roots only, without checking descendants individually. Recursive tag updates still validate the complete subtree and stop on insufficient permission or an incomplete scan.
+Delete and move authorize the specified file or directory without checking descendants individually. Copy still requires read access to all copied content but does not check destination descendants individually. Recursive tag updates still validate the complete subtree and stop on insufficient permission or an incomplete scan.
 
 For a directory, `stat.count` uses the same path and ACL scalar filter and reports the number of context records visible to the caller.
 

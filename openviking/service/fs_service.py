@@ -1221,7 +1221,9 @@ class FSService:
             await viking_fs._ensure_access(from_uri, ctx, action=AclAction.WRITE)
         else:
             await viking_fs._ensure_copy_source_access(from_uri, recursive=recursive, ctx=ctx)
-        await viking_fs._ensure_access(to_uri, ctx, action=AclAction.WRITE)
+        await viking_fs._ensure_access(
+            to_uri, replace(ctx, bypass_acl=True), action=AclAction.WRITE
+        )
         source_path = viking_fs._uri_to_path(from_uri, ctx=ctx)
         target_path = viking_fs._uri_to_path(to_uri, ctx=ctx)
         viking_fs._validate_transfer_paths(source_path, target_path)

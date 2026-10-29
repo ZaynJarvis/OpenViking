@@ -419,7 +419,9 @@ class _OpsMixin:
         old_uri = self._normalize_transfer_uri(old_uri)
         new_uri = self._normalize_transfer_uri(new_uri)
         await self._ensure_copy_source_access(old_uri, recursive=recursive, ctx=ctx)
-        await self._ensure_access(new_uri, ctx, action=AclAction.WRITE)
+        await self._ensure_destination_access(new_uri, ctx)
+        copy_ctx = replace(self._ctx_or_default(ctx), bypass_acl=True)
+        await self._ensure_access(new_uri, copy_ctx, action=AclAction.WRITE)
         old_scope = old_uri.rstrip("/")
         new_scope = new_uri.rstrip("/")
         if old_scope == new_scope:
@@ -475,7 +477,7 @@ class _OpsMixin:
                 old_uri=old_uri,
                 new_uri=new_uri,
                 is_dir=is_dir,
-                ctx=ctx,
+                ctx=copy_ctx,
                 lease_ref=lease,
                 copy_semantic_sidecars=copy_semantic_sidecars,
             )
@@ -486,13 +488,13 @@ class _OpsMixin:
                         old_uri,
                         new_uri,
                         recursive=is_dir,
-                        ctx=ctx,
+                        ctx=copy_ctx,
                         **({"source_uris": source_uris} if is_dir else {}),
                     )
                 except Exception:
                     try:
                         await self._cleanup_transfer_target(
-                            new_path, is_dir=is_dir, ctx=ctx, lease_ref=lease
+                            new_path, is_dir=is_dir, ctx=copy_ctx, lease_ref=lease
                         )
                     except Exception:
                         logger.warning("Failed to clean copy target %s", new_uri, exc_info=True)
@@ -550,6 +552,8 @@ class _OpsMixin:
     ) -> List[str]:
         """Validate all affected entries under the lease before the first content write."""
         source_uris: List[str] = []
+        # Copy checks source ACLs in batches below; retain per-path namespace guards.
+        guard_ctx = ctx if move else replace(self._ctx_or_default(ctx), bypass_acl=True)
 
         async def visit(source: str, target: str, directory: bool) -> None:
             source_path = self._uri_to_path(source, ctx=ctx)
@@ -560,8 +564,8 @@ class _OpsMixin:
                 if directory or source != old_uri:
                     await self._ensure_access(source, ctx, action=AclAction.MANAGE)
             else:
-                await self._ensure_copy_source_access(source, recursive=directory, ctx=ctx)
-            await self._ensure_access(target, ctx, action=AclAction.WRITE)
+                await self._ensure_copy_source_access(source, recursive=directory, ctx=guard_ctx)
+            await self._ensure_access(target, guard_ctx, action=AclAction.WRITE)
             await self._ensure_transfer_target_type(
                 self._uri_to_path(target, ctx=ctx), target, is_dir=directory
             )
@@ -569,10 +573,19 @@ class _OpsMixin:
             if directory:
                 # Match the copy traversal exactly; user content can use names
                 # that the namespace listing API hides, such as tasks/_system.
-                for entry in await self._async_agfs.ls(source_path):
-                    name = entry.get("name", "")
-                    if not name or name in (".", ".."):
-                        continue
+                entries = [
+                    entry
+                    for entry in await self._async_agfs.ls(source_path)
+                    if entry.get("name") and entry["name"] not in (".", "..")
+                ]
+                if not move:
+                    await self._ensure_access_many(
+                        [f"{source.rstrip('/')}/{entry['name']}" for entry in entries],
+                        ctx,
+                        action=AclAction.READ,
+                    )
+                for entry in entries:
+                    name = entry["name"]
                     await visit(
                         f"{source.rstrip('/')}/{name}",
                         f"{target.rstrip('/')}/{name}",
