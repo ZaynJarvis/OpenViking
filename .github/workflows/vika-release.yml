@@ -27,6 +27,7 @@ on:
   pull_request:
     paths:
       - "vika/**"
+      - ".github/workflows/vika-release.yml"
 
 permissions:
   contents: read
