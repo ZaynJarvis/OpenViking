@@ -1266,9 +1266,8 @@ async def _seed_compile_target(service, target, ctx):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("move_parent", [False, True])
-async def test_compile_metadata_stays_at_original_uri_after_move(service, monkeypatch, move_parent):
-    """Target and parent moves preserve registered history and schedule slots at the original URI."""
+async def test_parent_move_preserves_compile_metadata_at_original_uri(service, monkeypatch):
+    """Moving a target's parent preserves its history and schedule at the registered URI."""
     from datetime import datetime
 
     from openviking.service.compile_scheduler import TZ, CompileScheduler
@@ -1277,9 +1276,9 @@ async def test_compile_metadata_stays_at_original_uri_after_move(service, monkey
     account = ctx.account_id
     store = service.compile.lifecycle.store
     target = "viking://resources/bundle/wiki"
-    source_root = "viking://resources/bundle" if move_parent else target
+    source_root = "viking://resources/bundle"
     destination_root = "viking://resources/relocated"
-    moved_to = f"{destination_root}/wiki" if move_parent else destination_root
+    moved_to = f"{destination_root}/wiki"
     original_file, moved_file = f"{target}/page.md", f"{moved_to}/page.md"
     operation, outputs, version = await _seed_compile_target(service, target, ctx)
     async with store.edit(account, target) as record:

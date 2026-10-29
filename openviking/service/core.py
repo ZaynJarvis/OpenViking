@@ -689,6 +689,7 @@ class OpenVikingService:
                 self._compile_scheduler.save_credential
             )
         self._fs_service.compile_versions = self._compile_service.lifecycle.versions
+        self._fs_service.compile_lifecycle = self._compile_service.lifecycle
         self._resource_service.compile_versions = self._compile_service.lifecycle.versions
 
         if self._queue_manager:

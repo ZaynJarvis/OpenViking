@@ -113,6 +113,7 @@ def _visible_grep_content(content: str, uri: str) -> str:
 if TYPE_CHECKING:
     from openviking.resource.watch_manager import WatchManager
     from openviking.resource.watch_scheduler import WatchScheduler
+    from openviking.service.compile_targets import CompileLifecycle
     from openviking.service.resource_memory_link_service import ResourceMemoryLinkService
     from openviking.storage import VikingDBManager
 
@@ -141,6 +142,8 @@ class FSService:
         self._uri_mutation_coordinator = uri_mutation_coordinator or UriMutationCoordinator()
         # Installed by OpenVikingService; records Compile output versions after writes.
         self.compile_versions: Optional[Any] = None
+        # Installed by OpenVikingService; transfers exact-target Compile settings on mv.
+        self.compile_lifecycle: Optional["CompileLifecycle"] = None
 
     def set_dependencies(
         self,
@@ -1033,7 +1036,7 @@ class FSService:
         *,
         ctx: RequestContext,
     ) -> None:
-        """Move content and Watch state, refresh parents, and leave Compile metadata in place."""
+        """Move content and Watch state, migrate exact-target Compile settings, and refresh parents."""
         viking_fs = self._ensure_initialized()
         await viking_fs._ensure_access(from_uri, ctx, action=AclAction.MANAGE)
         watch_manager = self._get_watch_manager()
@@ -1088,6 +1091,23 @@ class FSService:
                         logger.exception("Move rollback failed: %s -> %s", to_uri, from_uri)
                         raise rollback_error from commit_error
                     raise
+            if self.compile_lifecycle is not None:
+                try:
+                    await self.compile_lifecycle.move_target(from_uri, to_uri, ctx)
+                except Exception as exc:
+                    if isinstance(exc, OpenVikingError) and exc.details.get("move_committed"):
+                        raise
+                    raise OpenVikingError(
+                        f"Content moved, but Compile configuration migration failed: {exc}",
+                        code=getattr(exc, "code", "INTERNAL"),
+                        details={
+                            **(exc.details if isinstance(exc, OpenVikingError) else {}),
+                            "from": from_uri,
+                            "to": to_uri,
+                            "move_committed": True,
+                            "phase": "compile_config",
+                        },
+                    ) from exc
         rebuild_target = not source_indexed and target_indexed
         if rebuild_target:
             await self._refresh_move_parents(

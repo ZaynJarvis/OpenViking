@@ -26,8 +26,9 @@ import math
 import random
 import sys
 import time
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
+from copy import deepcopy
 from typing import (
     Annotated,
     Any,
@@ -68,6 +69,7 @@ from openviking_cli.exceptions import (
     FailedPreconditionError,
     InvalidArgumentError,
     NotFoundError,
+    OpenVikingError,
     PermissionDeniedError,
 )
 from openviking_cli.session.user_id import UserIdentifier
@@ -163,6 +165,9 @@ class CompileStore(Protocol):
     def edit(
         self, account_id: str, to: str, *, create: bool = False
     ) -> AsyncContextManager[Dict[str, Any]]: ...
+    def edit_move(
+        self, account_id: str, from_uri: str, to_uri: str
+    ) -> AsyncContextManager[Optional[tuple[Dict[str, Any], Dict[str, Any]]]]: ...
     async def list_summaries(self, account_id: str) -> List[Dict[str, Any]]: ...
     def iter_summaries(
         self, account_id: str, *, cursor: Optional[str] = None
@@ -385,6 +390,70 @@ class CompileStateStore:
         """Save the observed business-file change time in Unix seconds."""
         async with self.edit(account_id, to) as record:
             record["content_updated_at"] = time.time()
+
+    @asynccontextmanager
+    async def edit_move(
+        self, account_id: str, from_uri: str, to_uri: str
+    ) -> AsyncIterator[Optional[tuple[Dict[str, Any], Dict[str, Any]]]]:
+        """Edit an active source and an unregistered destination under both state locks.
+
+        account_id selects the registry; from_uri and to_uri are canonical target URIs.
+        Yield None when migration does not apply; otherwise yield source and fresh
+        destination states. Clean exit means content has moved and saves destination
+        before source. Write failures attempt metadata compensation and report that
+        content is committed. History files are neither read nor modified.
+        """
+        source = await self.get(account_id, from_uri)
+        destination = await self.get(account_id, to_uri)
+        if source is None or source["status"] != "active" or destination is not None:
+            yield None
+            return
+        paths = {uri: self._record_path(account_id, uri) for uri in (from_uri, to_uri)}
+        async with AsyncExitStack() as locks:
+            leases = {}
+            for uri in sorted(paths, key=paths.get):
+                leases[uri] = await locks.enter_async_context(self.locked(paths[uri]))
+            source = await self.get(account_id, from_uri)
+            destination = await self.get(account_id, to_uri)
+            if source is None or source["status"] != "active" or destination is not None:
+                yield None
+                return
+            original = deepcopy(source)
+            destination = new_record(to_uri)
+            yield source, destination
+            # shortcut: compensation covers request failures; crash-atomic moves need durable recovery.
+            phase = "compile_target_state"
+            try:
+                await self.write_json(
+                    paths[to_uri], _normalize_schedule(destination), leases[to_uri]
+                )
+                phase = "compile_source_state"
+                await self.write_json(
+                    paths[from_uri], _normalize_schedule(source), leases[from_uri]
+                )
+            except Exception as exc:
+                compensated = False
+                try:
+                    if phase == "compile_source_state":
+                        await self.write_json(paths[from_uri], original, leases[from_uri])
+                    await self.remove(paths[to_uri], lease=leases[to_uri])
+                    compensated = True
+                except Exception:
+                    logger.exception(
+                        "Compile move metadata compensation failed: %s -> %s", from_uri, to_uri
+                    )
+                raise OpenVikingError(
+                    "Content moved, but Compile configuration migration failed; "
+                    "repair the Compile configuration separately",
+                    code="INTERNAL",
+                    details={
+                        "from": from_uri,
+                        "to": to_uri,
+                        "move_committed": True,
+                        "phase": phase,
+                        "compensation_succeeded": compensated,
+                    },
+                ) from exc
 
     # ---------- operations ----------
 
@@ -813,6 +882,73 @@ class CompileLifecycle:
         self.save_credential = None
         # Server callback: async (account_id, user_id) -> current groups.
         self.resolve_groups = None
+
+    async def move_target(self, from_uri: str, to_uri: str, ctx: RequestContext) -> None:
+        """Migrate scheduled settings after content and Watch state have moved.
+
+        from_uri and to_uri identify directories in ctx.account_id.
+        Only the two exact target states are inspected. An active source with no
+        destination state migrates; running sources and invalid output layouts fail
+        configuration migration. Execution history stays at its original URI. A schedule
+        registration failure leaves committed states intact and reports partial success.
+        """
+        from openviking.service.compile_scheduler import now_iso
+        from openviking.service.compile_service import CompileService
+
+        from_uri, to_uri = from_uri.rstrip("/"), to_uri.rstrip("/")
+        async with self._store.edit_move(ctx.account_id, from_uri, to_uri) as states:
+            if states is None:
+                return
+            source, destination = states
+            if source.get("active_task_id"):
+                raise ConflictError(f"Compile is running on {from_uri}", resource="COMPILE_RUNNING")
+            CompileService._validate_target(to_uri)
+            self.validate_layout(to_uri, source["from"])
+            if uri_matches_prefix(source["skill"], from_uri):
+                raise InvalidArgumentError(
+                    f"Compile Skill must be outside the moved target: {source['skill']}"
+                )
+            if source["auto_update"] and self.reschedule is None:
+                raise FailedPreconditionError(
+                    "Scheduled Compile is disabled on this instance",
+                    details={"reason": "COMPILE_SCHEDULER_DISABLED"},
+                )
+            for key in ("from", "skill", "instruction", "auto_update", "update_schedule"):
+                destination[key] = deepcopy(source[key])
+            destination["schedule_configured"] = source.get(
+                "schedule_configured", source["skill"] is not None
+            )
+            destination["execution_context"] = {
+                key: deepcopy(source["execution_context"][key])
+                for key in ("args", "executor", "credential")
+            }
+            destination["auto_update_enabled_at"] = (
+                now_iso() if destination["auto_update"] else None
+            )
+            source.update(
+                status="deleted",
+                deleted_at=time.time(),
+                auto_update=False,
+                active_task_id=None,
+                active_operation_id=None,
+            )
+            source["execution_context"]["credential"] = None
+        if self.reschedule is not None:
+            try:
+                await self.reschedule(ctx.account_id, destination, raise_on_error=True)
+                await self.reschedule(ctx.account_id, source, raise_on_error=True)
+            except Exception as exc:
+                raise OpenVikingError(
+                    "Content and Compile configuration moved, but schedule registration failed",
+                    code=getattr(exc, "code", "INTERNAL"),
+                    details={
+                        "from": from_uri,
+                        "to": to_uri,
+                        "move_committed": True,
+                        "compile_config_migrated": True,
+                        "phase": "compile_schedule",
+                    },
+                ) from exc
 
     # ---------- submission ----------
 

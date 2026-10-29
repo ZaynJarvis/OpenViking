@@ -250,7 +250,7 @@ class CompileScheduler:
         """Submit the URI's due slot once under its state lock.
 
         ``now`` defaults to Beijing time. Return submitted, disabled or not_due;
-        missing or moved targets raise LookupError. The saved slot follows moves.
+        missing targets raise LookupError. Saved slots prevent duplicate submissions.
         """
         to = to.rstrip("/")
         now = now or datetime.now(TZ)
