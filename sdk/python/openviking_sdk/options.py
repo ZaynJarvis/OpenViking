@@ -91,8 +91,6 @@ class AddSkillOptions(_ExtraOptions, total=False):
 
 class UpdateSkillOptions(AddSkillOptions, total=False):
     source_metadata: Dict[str, Any]
-    # Revision returned by get_skill(include_integrity=True), checked before replacement.
-    expected_revision: str
 
 
 class WriteOptions(_ExtraOptions, total=False):

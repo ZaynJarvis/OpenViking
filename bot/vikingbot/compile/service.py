@@ -44,7 +44,6 @@ from vikingbot.agent.tools.compile import (
 from vikingbot.agent.tools.registry import ToolRegistry
 from vikingbot.agent.tools.spawn import WaitSubagentsTool
 from vikingbot.compile import file_ops
-from vikingbot.compile.hashing import content_hash
 from vikingbot.compile.models import (
     COMPILE_DRAFT_ROOT,
     COMPILE_STAGING_ROOT,
@@ -1338,13 +1337,10 @@ class BotCompileService:
         skill_dir: Path,
         stage: str = "loading_skill",
     ) -> None:
-        """Copy a package view, rejecting bytes that differ from its integrity manifest."""
+        """Copy a Skill package and reject attachment paths outside skill_dir."""
         skill_dir.mkdir(parents=True, exist_ok=True)
         content = str(skill_result.get("content") or "")
-        encoded = content.encode("utf-8")
-        if skill_result.get("content_sha256") not in {None, content_hash(encoded)}:
-            raise CompileFailure("WRITE_CONFLICT", "Skill definition changed", stage=stage)
-        (skill_dir / "SKILL.md").write_bytes(encoded)
+        (skill_dir / "SKILL.md").write_bytes(content.encode("utf-8"))
 
         files = skill_result.get("files") or []
         for item in files:
@@ -1361,10 +1357,6 @@ class BotCompileService:
             except ValueError as exc:
                 raise CompileFailure("SKILL_INVALID", str(exc), stage=stage) from exc
             data = await client.download_bytes(str(item.get("uri") or ""))
-            if item.get("sha256") not in {None, content_hash(data)}:
-                raise CompileFailure(
-                    "WRITE_CONFLICT", f"Skill file changed: {relative}", stage=stage
-                )
             local.parent.mkdir(parents=True, exist_ok=True)
             local.write_bytes(data)
 
@@ -1377,9 +1369,6 @@ class BotCompileService:
     ) -> dict[str, list[str]]:
         """Publish one validated package, retaining untouched existing attachments.
 
-        Pipeline file guards bind generated content to its original reads. An
-        integrity snapshot also guards retained attachments through the Skill
-        API's atomic package-revision check when updating an existing package.
         The returned URIs identify Skill roots, as required by Compile's Skill result.
         """
         result = {"created": [], "updated": [], "unchanged": []}
@@ -1418,17 +1407,9 @@ class BotCompileService:
                     raise
                 exists = False
             if exists:
-                skill_result = await client.get_skill(
-                    skill_name, target_uri=target_uri, include_integrity=True
-                )
-                revision = skill_result.get("revision")
-                if not revision:
-                    raise CompileFailure(
-                        "WRITE_CONFLICT", "Skill package revision is unavailable", stage="writing"
-                    )
                 await self._materialize_skill_package(
                     client=client,
-                    skill_result=skill_result,
+                    skill_result=await client.get_skill(skill_name, target_uri=target_uri),
                     skill_dir=skill_dir,
                     stage="writing",
                 )
@@ -1462,7 +1443,6 @@ class BotCompileService:
                     str(skill_dir),
                     target_uri=target_uri,
                     wait=True,
-                    expected_revision=revision,
                 )
             else:
                 published = await client.add_skill(str(skill_dir), target_uri=target_uri, wait=True)
