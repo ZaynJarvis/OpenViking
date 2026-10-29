@@ -938,7 +938,7 @@ export class CodexAgent {
         // response); detach and kill it so a retry does not orphan a live runtime.
         this._handleExit(child);
         if (child.exitCode === null) terminateProcessTree(child, 'SIGKILL');
-        const hint = this.runtime === 'traex' ? '; requires TRAE CLI 2.0 app-server (use traex when keeping Coco)' : '';
+        const hint = this.runtime === 'traex' ? '; requires a TraeX with app-server support' : '';
         reject(new Error(`${safe(error)}${hint}${diagnostic ? `; stderr: ${diagnostic}` : ''}`));
       };
 

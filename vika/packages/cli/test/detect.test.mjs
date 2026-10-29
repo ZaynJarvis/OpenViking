@@ -191,18 +191,18 @@ function traexFixture(t, names) {
   return { bin, options, probed, logins, detect: async () => (await detectRuntimes(options)).find(({ id }) => id === 'traex') };
 }
 
-test('TraeX: rejects old Coco instead of equating an executable traecli with a usable runtime', async (t) => {
+test('TraeX: rejects an old TraeX instead of equating an executable traecli with a usable runtime', async (t) => {
   const f = traexFixture(t, ['traecli']);
   delete f.options.probe; // Exercise the real subprocess probe against exit 1.
   const runtime = await f.detect();
   assert.equal(runtime.installed, true);
   assert.equal(runtime.protocolCompatible, false);
   assert.equal(runtime.available, false);
-  assert.match(runtime.note, /TRAE CLI 2.0.*Coco.*traex/);
+  assert.match(runtime.note, /app-server.*TraeX/);
   assert.deepEqual(f.logins, [], 'never invoke the old CLI login flow');
 });
 
-test('TraeX: discovers a new-only traex installation and prefers it when Coco coexists', async (t) => {
+test('TraeX: discovers a new-only traex installation and prefers it when an old traecli coexists', async (t) => {
   for (const names of [['traex'], ['traecli', 'traex']]) {
     const f = traexFixture(t, names);
     const runtime = await f.detect();
@@ -214,9 +214,13 @@ test('TraeX: discovers a new-only traex installation and prefers it when Coco co
   }
 });
 
-test('TraeX: a compatible traecli alias remains supported', async (t) => {
-  const f = traexFixture(t, ['traecli']);
-  assert.equal((await f.detect()).available, true);
+test('TraeX: a compatible traecli or trae-cli alias is supported', async (t) => {
+  for (const name of ['traecli', 'trae-cli']) {
+    const f = traexFixture(t, [name]);
+    const runtime = await f.detect();
+    assert.equal(runtime.available, true);
+    assert.equal(runtime.bin, path.join(f.bin, name));
+  }
 });
 
 test('TraeX: reports login failure separately from protocol incompatibility', async (t) => {

@@ -4,7 +4,7 @@
   "env": {
     "LARK_CLI_BIN": "",
     "CODEX_BIN": "",
-    "TRAEX_BIN": "traecli",
+    "TRAEX_BIN": "",
     "CLAUDE_BIN": "claude",
     "PI_BIN": "",
     "VIKA_WEIXIN_LONG_POLL_TIMEOUT_MS": "35000",

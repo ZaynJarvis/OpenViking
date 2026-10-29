@@ -27,7 +27,7 @@ curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/vika/install.sh | sh
 
 Codex、TraeX、Claude、Pi 都要先完成各自 CLI 登录。完整配置字段看 [config.example.json](./config.example.json)。
 
-TraeX 需要支持 `app-server` 的 **TRAE CLI 2.0**，旧 Coco / TRAE CLI 1.0 的 `acp serve` 不能替代它。安装时若保留 Coco，`traecli` 可能仍指向旧版，新版使用 `traex`。setup 会依次检查 `traex`、`traecli`，解析软链接并去重，只有 stdio `initialize` 握手和 `login status` 都通过才提供该选项；探测不会创建会话或调用模型。显式设置 `TRAECLI_BIN`（兼容旧变量 `TRAEX_BIN`，优先级更高）时只检查指定文件，失败不会悄悄换另一个 CLI。setup 保存通过检查的实际路径，不修改用户的命令别名。
+TraeX 的命令可能叫 `traex`、`traecli` 或 `trae-cli`，装了哪个都行；Vika 用它的 `app-server` 协议，太旧、只有 `acp serve` 的版本不能用。setup 会依次检查 `traex`、`traecli`、`trae-cli`，解析软链接并去重，只有 stdio `initialize` 握手和 `login status` 都通过才提供该选项；探测不会创建会话或调用模型。显式设置 `TRAECLI_BIN`（兼容旧变量 `TRAEX_BIN`，优先级更高）时只检查指定文件，失败不会悄悄换另一个 CLI。setup 保存通过检查的实际路径，不修改用户的命令别名。
 
 如果启动失败，先运行 `vika logs <实例>` 查看具体错误。app-server 握手失败会附上有长度上限、经过脱敏的 stderr。`vika start <实例>` 对已经 online 的 PM2 进程也会验证所属 release 和 ready 状态，服务未就绪会返回失败，不会重启或覆盖该进程。PATH 提示找不到 `vika` 时，可先用 `~/.vika/bin/vika`；安装器依据 shell 写 rc，macOS 的 bash 使用 `.bash_profile`，Linux 的 bash 使用 `.bashrc`，zsh 使用 `.zshrc`，当前终端需加载对应文件或重新打开。
 

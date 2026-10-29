@@ -7,7 +7,7 @@ import { captureStartupStderr } from '../../daemon/src/runtime-diagnostics.mjs';
 import { safeError } from '../../daemon/src/logger.mjs';
 
 // Initialize only: no thread, model request, user message or persisted session.
-// Old Coco can share the traecli name but speaks ACP, not this protocol.
+// An older TraeX can answer to the same command names but speaks ACP, not this protocol.
 export function probeAppServer(bin, { env = process.env, spawnImpl = spawn, timeoutMs = 5000 } = {}) {
   return new Promise((resolve) => {
     let child;

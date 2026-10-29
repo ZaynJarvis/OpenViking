@@ -71,11 +71,14 @@ export async function detectRuntimes({ env = process.env, execFileImpl = execFil
   return runtimes;
 }
 
+// TraeX installs under any of these names; the first one that passes is used.
+const TRAEX_COMMANDS = ['traex', 'traecli', 'trae-cli'];
+
 async function detectTraex({ env, execFileImpl, probe }) {
   // A configured binary is authoritative. Do not silently replace it with an
   // unrelated login/configuration from PATH when it fails verification.
   const explicit = env.TRAEX_BIN?.trim() || env.TRAECLI_BIN?.trim();
-  const candidates = explicit ? [explicit] : [which('traex', env), which('traecli', env)].filter(Boolean);
+  const candidates = explicit ? [explicit] : TRAEX_COMMANDS.map((name) => which(name, env)).filter(Boolean);
   const seen = new Set();
   let best = null;
   for (const candidate of candidates) {
@@ -100,8 +103,8 @@ async function detectTraex({ env, execFileImpl, probe }) {
       const protocol = await probe(bin, { env });
       result.protocolCompatible = protocol.compatible;
       if (!protocol.compatible) {
-        result.note = t(`不支持 Vika 所需的 app-server 握手：${bin}；请安装或选择 TRAE CLI 2.0（保留 Coco 时用 traex）`,
-          `Required app-server handshake failed: ${bin}; install/select TRAE CLI 2.0 (use traex when keeping Coco)`);
+        result.note = t(`不支持 Vika 所需的 app-server 握手：${bin}；请升级到支持 app-server 的 TraeX`,
+          `Required app-server handshake failed: ${bin}; update to a TraeX with app-server support`);
         if (protocol.reason) result.note += ` (${protocol.reason})`;
       } else {
         const login = await run(execFileImpl, bin, ['login', 'status'], env);

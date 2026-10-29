@@ -10,6 +10,22 @@ import { managedPiBin } from './pi-runtime.mjs';
 import { resolveRolePromptPath } from './conversation-policy.mjs';
 
 const sourceDir = path.dirname(fileURLToPath(import.meta.url));
+
+// TraeX installs under any of these names; without a configured binary, use
+// the first one on PATH.
+function traexCommand(env = process.env) {
+  const names = ['traex', 'traecli', 'trae-cli'];
+  const directories = String(env.PATH || '').split(path.delimiter).filter(Boolean);
+  for (const name of names) {
+    for (const directory of directories) {
+      try {
+        fs.accessSync(path.join(directory, name), fs.constants.X_OK);
+        return name;
+      } catch {}
+    }
+  }
+  return names[0];
+}
 export const moduleDir = path.resolve(sourceDir, '..');
 export const projectDir = path.resolve(moduleDir, '..', '..');
 
@@ -202,7 +218,7 @@ export function getConfig() {
       max: 120_000,
     }),
     codexBin: process.env.CODEX_BIN || 'codex',
-    traexBin: process.env.TRAEX_BIN || process.env.TRAECLI_BIN || 'traecli',
+    traexBin: process.env.TRAEX_BIN || process.env.TRAECLI_BIN || traexCommand(),
     claudeBin: process.env.CLAUDE_BIN || 'claude',
     piBin: process.env.PI_BIN || managedPiBin(),
     initialModel: process.env.VIKA_MODEL || '',

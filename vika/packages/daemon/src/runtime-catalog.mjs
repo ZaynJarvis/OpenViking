@@ -47,8 +47,8 @@ export const RUNTIME_CATALOG = Object.freeze({
   }),
   traex: runtimeDefinition({
     id: 'traex',
-    aliases: ['traex', 'trae', 'traecli'],
-    directAliases: ['traex', 'trae', 'traecli'],
+    aliases: ['traex', 'trae', 'traecli', 'trae-cli'],
+    directAliases: ['traex', 'trae', 'traecli', 'trae-cli'],
     canonicalDefault: 'traex',
     efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
     capabilities: {

@@ -98,7 +98,7 @@ describe('TraexAgent app-server backend', () => {
     const { agent, children } = newAgent(makeStore());
     const started = agent.start();
     const rejected = assert.rejects(started, (error) => {
-      assert.match(error.message, /requires TRAE CLI 2.0 app-server/);
+      assert.match(error.message, /requires a TraeX with app-server support/);
       assert.match(error.message, /unknown subcommand.*app-server/);
       assert.doesNotMatch(error.message, /super-secret/);
       assert.ok(error.message.length < 2500);

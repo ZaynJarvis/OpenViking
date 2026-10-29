@@ -25,6 +25,7 @@ describe('runtime catalog', () => {
       traex: 'traex',
       trae: 'traex',
       traecli: 'traex',
+      'trae-cli': 'traex',
       claude: 'claude',
       volc: 'volc',
       volcengine: 'volc',
@@ -34,7 +35,7 @@ describe('runtime catalog', () => {
     assert.deepEqual(getRuntimeDefinition('claude').models, ['sonnet', 'opus', 'haiku', 'fable']);
     assert.deepEqual(getRuntimeDefinition('claude').efforts, ['low', 'medium', 'high', 'xhigh', 'max']);
     assert.equal(getRuntimeDefinition('codex').capabilities.sessionAuthority, 'preserve-process');
-    assert.deepEqual(getRuntimeDefinition('traex').directAliases, ['traex', 'trae', 'traecli']);
+    assert.deepEqual(getRuntimeDefinition('traex').directAliases, ['traex', 'trae', 'traecli', 'trae-cli']);
     assert.deepEqual(getRuntimeDefinition('traex').efforts, [
       'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
     ]);

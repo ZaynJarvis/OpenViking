@@ -159,6 +159,23 @@ describe('configuration safety', { concurrency: false }, () => {
     setEnv('TRAEX_BIN', undefined);
     assert.equal(getConfig().traexBin, '/ignored/traecli');
 
+    // Unset, the first TraeX command name on PATH wins.
+    setEnv('TRAECLI_BIN', undefined);
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'vika-traex-path-'));
+    const savedPath = process.env.PATH;
+    try {
+      fs.writeFileSync(path.join(bin, 'trae-cli'), '#!/bin/sh\n', { mode: 0o755 });
+      process.env.PATH = bin;
+      assert.equal(getConfig().traexBin, 'trae-cli');
+      fs.writeFileSync(path.join(bin, 'traecli'), '#!/bin/sh\n', { mode: 0o755 });
+      assert.equal(getConfig().traexBin, 'traecli');
+      process.env.PATH = '';
+      assert.equal(getConfig().traexBin, 'traex');
+    } finally {
+      process.env.PATH = savedPath;
+      fs.rmSync(bin, { recursive: true, force: true });
+    }
+
     setEnv('VIKA_TRAEX_EFFORT', 'turbo');
     assert.throws(() => getConfig(), /VIKA_TRAEX_EFFORT/);
   });
