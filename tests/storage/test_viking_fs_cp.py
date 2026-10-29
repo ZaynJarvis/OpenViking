@@ -824,8 +824,12 @@ async def test_cp_requires_readable_source_and_manage_for_directory_merge(permis
     source, target = "viking://resources/source", "viking://resources/target"
     agfs = _DirectoryCopyAGFS()
     agfs.directories.add("/local/acct/resources/target")
+    agfs.directories.add("/local/acct/resources/source/nested")
+    agfs.files["/local/acct/resources/source/nested/secret.md"] = b"nested"
     agfs.files["/local/acct/resources/target/data.bin"] = b"old"
     agfs.files["/local/acct/resources/target/only.txt"] = b"keep"
+    if permission == "source_denied":
+        agfs.files["/local/acct/resources/target/nested"] = b"type conflict"
     denied = EffectiveAcl(AclMode.RESTRICTED, DirectAcl(), DirectAcl())
     readable = EffectiveAcl(
         AclMode.RESTRICTED, DirectAcl((AclEntry("user:alice", AclLevel.READ),)), DirectAcl()
@@ -841,7 +845,7 @@ async def test_cp_requires_readable_source_and_manage_for_directory_merge(permis
             if uri == target
             else readable
             if uri.startswith(source)
-            and not (permission == "source_denied" and uri.endswith("data.bin"))
+            and not (permission == "source_denied" and uri.endswith("secret.md"))
             else denied
             for uri in uris
         }

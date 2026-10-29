@@ -109,7 +109,7 @@ An ACL grant on a directory is inherited by every descendant. `list`, `tree`, an
 
 Copies and moves do not carry source ACLs: existing destinations retain their ACLs, new destinations inherit their destination parent’s ACL, and private destinations have no ACL.
 
-Delete and move authorize the specified file or directory without checking descendants individually. Copy still requires read access to all copied content but does not check destination descendants individually. Recursive tag updates still validate the complete subtree and stop on insufficient permission or an incomplete scan.
+Delete and move authorize the specified file or directory without checking descendants individually. Copy checks read access against the complete filesystem manifest and rejects the whole copy if any content is unreadable; destination descendants are not checked individually. Recursive tag updates still validate the complete subtree and stop on insufficient permission or an incomplete scan.
 
 For a directory, `stat.count` uses the same path and ACL scalar filter and reports the number of context records visible to the caller.
 
