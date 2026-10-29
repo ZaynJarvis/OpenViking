@@ -1413,6 +1413,7 @@ async def write(
         ),
     ] = None,
     acl: Optional[AclSpec] = None,
+    resolve_conflicts: bool = False,
 ) -> str:
     """Write text to a viking:// file. Use this for files you author yourself (notes, profiles, state), the same way you would use a working directory. To change part of an existing file, prefer the edit tool over a full rewrite. To store a file, document, URL, or repo the user gives you, use add_resource; for a skill, use add_skill. Do not copy its text into a file here instead.
 
@@ -1420,6 +1421,8 @@ async def write(
     - mode="create": compatibility alias for replace; overwrite an existing file or create it if missing.
     - Any new file (whether created by "replace", "append", or "create") must end in one of: .md .txt .json .yaml .yml .toml .py .js .ts
     - mode="append": append to the end of an existing file; use the supplied content as the initial body if it is missing.
+    - resolve_conflicts: mark this edit as conflict resolution for an existing resource
+      Markdown file in replace mode (including its create alias); defaults to false.
     - acl: optional shared-resource ACL with acl_mode (inherit/restricted) and entries
       (principal=user:<id>/group:<id>/user:*, level=read/write/manage). Explicit ACL
       requires manage on the target, or its parent for a new file. Omit to preserve
@@ -1439,6 +1442,7 @@ async def write(
         wait=wait,
         acl=acl,
         edit_source="agent",
+        resolve_conflicts=resolve_conflicts,
     )
     written = result.get("written_bytes", 0)
     message = (

@@ -629,7 +629,12 @@ class ExternalTaskService:
         tracker = get_task_tracker()
         task = await tracker.get(task_id, account_id=account_id, user_id=user_id)
         if snapshot.stage is not None or snapshot.meta:
-            stage = snapshot.stage or snapshot.status
+            # Runtime termination can still require local finalization before the Task ends.
+            stage = (
+                task.stage
+                if task is not None and snapshot.status in {"completed", "failed", "cancelled"}
+                else snapshot.stage or snapshot.status
+            )
             meta = snapshot.meta or {}
             if task is not None and (
                 task.stage != stage
@@ -687,12 +692,14 @@ class ExternalTaskService:
                         )
                     )
                 if snapshot.status in _ACTIVE_STATUSES:
-                    await tracker.patch_task(
-                        task_id,
-                        TaskPatch(stage=snapshot.stage or snapshot.status),
-                        account_id=account_id,
-                        user_id=user_id,
-                    )
+                    stage = snapshot.stage or snapshot.status
+                    if task.stage != stage:
+                        await tracker.patch_task(
+                            task_id,
+                            TaskPatch(stage=stage),
+                            account_id=account_id,
+                            user_id=user_id,
+                        )
                     return False
 
         async def finalize() -> None:

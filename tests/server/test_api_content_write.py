@@ -57,11 +57,22 @@ async def test_ensure_directory_index_preserves_content_and_tags(client, service
     store = service.viking_fs._get_vector_store()
     update_tags = AsyncMock(wraps=store.update_search_tags)
     monkeypatch.setattr(store, "update_search_tags", update_tags)
+    tracker = get_task_tracker()
+    owner = {"account_id": ctx.account_id, "user_id": ctx.user.user_id}
+    tasks_before = {
+        task.task_id
+        for task in await tracker.list_tasks(task_type="ensure_directory_index", **owner)
+    }
     await service.fs.finalize_compile_directories(uri, ctx)
     assert update_tags.await_count == 2
     update_tags.reset_mock()
     await service.fs.finalize_compile_directories(uri, ctx)
     update_tags.assert_not_awaited()
+    tasks_after = {
+        task.task_id
+        for task in await tracker.list_tasks(task_type="ensure_directory_index", **owner)
+    }
+    assert tasks_after == tasks_before
     assert await service.viking_fs.read_file(f"{uri}/.abstract.md", ctx=ctx) == original
     records = await service.vikingdb_manager.filter(
         filter=PathScope("uri", uri), output_fields=["uri", "level", "search_tags"], ctx=ctx

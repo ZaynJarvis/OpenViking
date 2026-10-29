@@ -1724,7 +1724,7 @@ class FSService:
         require_abstract: bool = False,
     ) -> Dict[str, Any]:
         """Index required summaries, rechecking missing content/indexes under the parent lock.
-        Return index state; busy locks or invalid summaries raise.
+        Complete indexes return without a Task; busy locks or invalid summaries raise.
         ``require_abstract`` ensures Compile's L0 and marks its bookkeeping Task internal.
         """
         viking_fs = self._ensure_initialized()
@@ -1764,23 +1764,24 @@ class FSService:
                 summaries[level] = raw
             return summaries
 
+        summaries = await read_summaries()
+        records = await self._directory_index_records(uri, ctx)
+        indexed = {record["level"] for record in records}
+        required = {0} if require_abstract else set(summaries)
+        if required and required <= summaries.keys() & indexed:
+            return {
+                "uri": uri,
+                "created_abstract": False,
+                "indexed_levels": sorted(required),
+                "vector_status": "complete",
+            }
+
         async def execute() -> Dict[str, Any]:
             context = get_task_context()
             assert context is not None
             with bind_task_context(
                 context.task_id, context.account_id, context.user_id, enqueued_work=[]
             ):
-                summaries = await read_summaries()
-                records = await self._directory_index_records(uri, ctx)
-                indexed = {record["level"] for record in records}
-                required = {0} if require_abstract else set(summaries)
-                if required and required <= summaries.keys() & indexed:
-                    return {
-                        "uri": uri,
-                        "created_abstract": False,
-                        "indexed_levels": sorted(required),
-                        "vector_status": "complete",
-                    }
                 guard = PathLockGuard(viking_fs._async_agfs)
                 try:
                     # Lock the parent to avoid recreating a deleted target.
