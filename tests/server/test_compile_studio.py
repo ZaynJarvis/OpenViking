@@ -7,6 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -135,7 +136,7 @@ async def test_compile_publication_recovers_versions_without_output_manifest(
             pass
     uri = f"{owner}/page.md"
     changes = [{"uri": uri, "change_type": "added"}]
-    saved = {"uri": f"{target}/saved.md", "version_id": "v7", "snapshot_id": "saved-head"}
+    saved = {"uri": f"{target}/saved.md", "version_id": uuid4().hex, "snapshot_id": "saved-head"}
     await store.merge_outputs(ctx.account_id, target, run["operation_id"], [saved])
     with monkeypatch.context() as patch:
         patch.setattr(store, "merge_outputs", AsyncMock(side_effect=OSError("Outputs unavailable")))
@@ -145,6 +146,9 @@ async def test_compile_publication_recovers_versions_without_output_manifest(
             )
     persisted = await versions.load(ctx.account_id, owner, uri)
     assert persisted["next"] == 2 and len(persisted["versions"]) == 1
+    created = persisted["versions"][0]
+    assert created["version_number"] == 1
+    assert UUID(created["version_id"]).version == 4
     assert (await versions.owning_target(ctx.account_id, uri))["to"] == owner
     if nested:
         assert await versions.load(ctx.account_id, target, uri) is None
@@ -159,7 +163,10 @@ async def test_compile_publication_recovers_versions_without_output_manifest(
 
     expected = {
         "outputs": sorted(
-            [saved, {"uri": uri, "version_id": "v1", "snapshot_id": "compiled-head"}],
+            [
+                saved,
+                {"uri": uri, "version_id": created["version_id"], "snapshot_id": "compiled-head"},
+            ],
             key=lambda output: output["uri"],
         )
     }
@@ -199,11 +206,19 @@ async def test_compile_publication_records_ordinary_files_without_snapshot_diff(
     index = await versions.load(ctx.account_id, target, uri)
     assert index["next"] == 3
     assert [version["source"] for version in index["versions"]] == ["manual", "compile"]
+    assert [version["version_number"] for version in index["versions"]] == [1, 2]
+    assert len({version["version_id"] for version in index["versions"]}) == 2
     assert index["versions"][-1]["provenance"]["source_roots"] == sorted(
         [previous_root, *run["meta"]["changed_roots"]]
     )
     assert await versions._store.get_outputs(ctx.account_id, target, run["operation_id"]) == {
-        "outputs": [{"uri": uri, "version_id": "v2", "snapshot_id": "compiled-head"}]
+        "outputs": [
+            {
+                "uri": uri,
+                "version_id": index["versions"][-1]["version_id"],
+                "snapshot_id": "compiled-head",
+            }
+        ]
     }
     await versions.record_compile(ctx.account_id, record, run, "compiled-head", [], ctx)
     assert await versions.load(ctx.account_id, target, uri) == index

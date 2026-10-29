@@ -130,6 +130,7 @@ def new_record(to: str) -> Dict[str, Any]:
         "active_operation_id": None,  # Set and cleared with active_task_id.
         "last_run": None,
         "initial_operation_id": None,  # First Compile operation ID.
+        "initial_actor": None,  # First Compile user's user_id; None when unknown.
         "content_updated_at": None,  # Business-file change time in Unix seconds; None when unknown.
         "first_compile_created_at": None,  # First task creation in Unix seconds; None when unknown.
         "execution_context": {"executor": None, "credential": None, "args": {}},
@@ -1077,9 +1078,10 @@ class CompileLifecycle:
 
     @staticmethod
     def _record_identity(task: Any, record: Dict[str, Any]) -> None:
-        """Keep the first operation ID and earliest task creation time."""
+        """Keep the first operation's ID and user_id, and earliest task creation time."""
         if "initial_operation_id" in record and record["initial_operation_id"] is None:
             record["initial_operation_id"] = compile_operation_id(task)
+            record["initial_actor"] = task.user_id
         # Missing fields identify legacy targets whose first creation time is unknown.
         if "first_compile_created_at" in record:
             first = record["first_compile_created_at"]
@@ -1776,7 +1778,7 @@ def is_versioned(uri: str) -> bool:
 
 
 class CompileVersions:
-    """Persist output versions and reconcile current indexes with committed content."""
+    """Persist immutable UUID versions with numbering scoped to each file index."""
 
     def __init__(self, store: CompileStore, viking_fs: Any) -> None:
         self._store = store
@@ -1852,7 +1854,8 @@ class CompileVersions:
             )
             if version is None:
                 version = {
-                    "version_id": f"v{index['next']}",
+                    "version_id": uuid4().hex,
+                    "version_number": index["next"],
                     "snapshot_id": snapshot_id,
                     "snapshot_path": uri,
                     "created_at": time.time(),
@@ -2019,7 +2022,13 @@ class CompileVersions:
                     entry["finished_at"] = time.time()
                     entry["result"] = {
                         key: outcome[key]
-                        for key in ("result", "version_id", "written_bytes", "mode")
+                        for key in (
+                            "result",
+                            "version_id",
+                            "version_number",
+                            "written_bytes",
+                            "mode",
+                        )
                         if key in outcome
                     }
                     for key in ("created", "updated", "unchanged", "conflicts"):
@@ -2658,7 +2667,7 @@ class CompileVersions:
     async def versions(
         self, uri: str, ctx: RequestContext, *, limit: int, before: Optional[str]
     ) -> Dict[str, Any]:
-        """Return the owning Compile target, newest-first versions, and retained count."""
+        """Return target, retained count and numbered history, newest-first with UUID cursors."""
         await self._fs._ensure_access(uri, ctx)
         record = await self._managed(uri, ctx)
         index = await self.load(ctx.account_id, record["to"], uri)
@@ -2686,14 +2695,16 @@ class CompileVersions:
         ctx: RequestContext,
         write: Callable[[bytes, Callable[..., Awaitable[Any]]], Awaitable[Any]],
     ) -> Dict[str, Any]:
-        """Restore ``uri`` from ``restore_version`` under the content lock.
-
-        ``current_version`` must match; active Compile or mismatch raises ConflictError.
-        ``write`` persists and refreshes as ``ctx``; return new version metadata or noop.
-        """
+        """Restore by UUID; reject stale current_version under lock and return metadata or noop."""
         await self._fs._ensure_access(uri, ctx, action=AclAction.WRITE)
         record = await self._managed(uri, ctx)
         index = await self.load(ctx.account_id, record["to"], uri) or {"versions": []}
+        current = index["versions"][-1]["version_id"] if index["versions"] else None
+        if current != current_version:
+            raise ConflictError(
+                f"Current version is {current}, not {current_version}",
+                resource="VERSION_CONFLICT",
+            )
         source = next((v for v in index["versions"] if v["version_id"] == restore_version), None)
         if source is None:
             raise NotFoundError(restore_version, "file version")
@@ -2723,7 +2734,11 @@ class CompileVersions:
                 )
             if not snapshot or not await self._changed(ctx, target_to, uri, snapshot):
                 result.update(
-                    uri=uri, version_id=current, meta=dict(_VERSION_META_DEFAULTS), result="noop"
+                    uri=uri,
+                    version_id=current,
+                    version_number=index["versions"][-1]["version_number"],
+                    meta=dict(_VERSION_META_DEFAULTS),
+                    result="noop",
                 )
             else:
                 version = await self.append(
@@ -2738,7 +2753,12 @@ class CompileVersions:
                         "provenance": dict(source.get("provenance") or {}),
                     },
                 )
-                result.update(uri=uri, version_id=version["version_id"], meta=dict(version["meta"]))
+                result.update(
+                    uri=uri,
+                    version_id=version["version_id"],
+                    version_number=version["version_number"],
+                    meta=dict(version["meta"]),
+                )
             return written
 
         target_to = record["to"]
