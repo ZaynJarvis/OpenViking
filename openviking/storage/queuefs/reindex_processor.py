@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from openviking.server.identity import RequestContext, Role
 from openviking.service.task_tracker import TaskStatus, get_task_tracker
 from openviking.service.task_work_index import bind_task_context, extract_task_metadata
+from openviking.storage.pathlock_transfer import PathLockGuard
 from openviking.storage.queuefs.named_queue import DequeueHandlerBase
 from openviking.storage.queuefs.process_result import ProcessResult
 from openviking.storage.queuefs.reindex_msg import ReindexMsg
@@ -139,6 +140,7 @@ class ReindexProcessor(DequeueHandlerBase):
                 # call so an exception cannot release the same lease twice.
                 executor_lease = lease
                 lease = None
+                lease_guard = PathLockGuard(self._viking_fs._async_agfs, executor_lease)
                 result = await executor._run(
                     uri=msg.uri,
                     object_type=msg.object_type,
@@ -149,7 +151,7 @@ class ReindexProcessor(DequeueHandlerBase):
                         mode=msg.mode, tags=msg.tags, tag_mode=msg.tag_mode
                     ),
                     ctx=ctx,
-                    existing_lease=executor_lease,
+                    lease_guard=lease_guard,
                 )
             if metadata is not None:
                 await tracker.wait_for_descendants(msg.task_id, metadata.work_id)
