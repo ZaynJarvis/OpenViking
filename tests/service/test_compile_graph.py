@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock
@@ -11,8 +12,21 @@ from openviking.service.compile_graph import (
     ArtifactGraphTooLargeError,
     ArtifactRelationGraph,
 )
+from openviking.service.compile_targets import CompileStateStore
 from openviking.storage.internal_names import is_storage_internal_name
 from openviking_cli.session.user_id import UserIdentifier
+
+
+class _CacheAgfs:
+    def __init__(self) -> None:
+        self.writes: list[tuple[str, bytes, dict[str, str]]] = []
+
+    def ensure_parent_dirs(self, _path: str, *, ctx: dict[str, str]) -> dict[str, str]:
+        return {"message": "created"}
+
+    def write(self, path: str, data: bytes, *, ctx: dict[str, str]) -> str:
+        self.writes.append((path, data, ctx))
+        return "written"
 
 
 class _GraphAgfs:
@@ -109,6 +123,27 @@ def _graph(fs: _GraphFs, **limits: int) -> ArtifactRelationGraph:
         max_markdown_files=limits.get("max_markdown_files", 100),
         max_markdown_bytes=limits.get("max_markdown_bytes", 1024),
     )
+
+
+@pytest.mark.asyncio
+async def test_cache_publish_uses_one_supported_write() -> None:
+    agfs = _CacheAgfs()
+    store = CompileStateStore(agfs)
+    graph = {"schema_version": 1, "nodes": [], "edges": []}
+
+    await store.write_artifact_relations("default", "target_1", graph)
+
+    assert len(agfs.writes) == 1
+    path, data, ctx = agfs.writes[0]
+    assert path == (
+        "/local/default/_system/compile/target_folders/target_1/"
+        "artifact_relations.json"
+    )
+    assert json.loads(data) == graph
+    assert ctx == {
+        "account_id": "default",
+        "disable_auto_pathlock": "true",
+    }
 
 
 @pytest.mark.asyncio

@@ -290,25 +290,12 @@ class CompileStateStore:
     async def write_artifact_relations(
         self, account_id: str, target_id: str, value: Dict[str, Any]
     ) -> None:
-        """Publish a complete graph cache without exposing partial JSON."""
+        """Write the graph cache while the caller holds the output tree lock."""
         path = self._artifact_relations_path(account_id, target_id)
-        temp_path = f"{path}.{uuid4().hex}.tmp"
         fs_ctx = fs_ctx_from_agfs_path(path)
         await self._ensure_parent(path, fs_ctx)
         data = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        await self._agfs.write(temp_path, data, fs_ctx=fs_ctx, auto_pathlock=False)
-        try:
-            await self._agfs.replace(
-                temp_path,
-                path,
-                fs_ctx=fs_ctx,
-                auto_pathlock=False,
-            )
-        finally:
-            try:
-                await self._agfs.rm(temp_path, force=True, fs_ctx=fs_ctx, auto_pathlock=False)
-            except (AGFSNotFoundError, FileNotFoundError):
-                pass
+        await self._agfs.write(path, data, fs_ctx=fs_ctx, auto_pathlock=False)
 
     @asynccontextmanager
     async def locked(self, path: str, inherited_lease: Any = None) -> AsyncIterator[Any]:

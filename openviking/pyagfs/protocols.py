@@ -87,9 +87,6 @@ class AGFSSyncClientProtocol(Protocol):
     def mv(self, old_path: str, new_path: str) -> Dict[str, Any]:
         """Move or rename a path inside AGFS."""
 
-    def replace(self, src_path: str, dst_path: str) -> Dict[str, Any]:
-        """Replace a file by moving the source onto the destination."""
-
     def copy_within_mount(self, src_path: str, dst_path: str) -> Dict[str, Any]:
         """Attempt a same-mount verbatim copy and report whether it was used."""
 

@@ -276,23 +276,6 @@ class AsyncAGFSClient:
             ctx=_fs_ctx_with_auto_pathlock(old_path, fs_ctx, auto_pathlock),
         )
 
-    async def replace(
-        self,
-        src_path: str,
-        dst_path: str,
-        *,
-        fs_ctx: Dict[str, str] | None = None,
-        auto_pathlock: bool = True,
-    ) -> Dict[str, Any]:
-        """Replace a file by moving the source onto the destination."""
-        ensure_same_encryption_account(src_path, dst_path)
-        return await self.run(
-            "replace",
-            src_path,
-            dst_path,
-            ctx=_fs_ctx_with_auto_pathlock(src_path, fs_ctx, auto_pathlock),
-        )
-
     async def cp(
         self,
         src_path: str,

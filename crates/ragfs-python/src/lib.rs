@@ -2212,27 +2212,6 @@ impl RAGFSBindingClient {
         Ok(m)
     }
 
-    /// Replace a file by moving the source onto the destination.
-    #[pyo3(signature = (src_path, dst_path, ctx=None))]
-    fn replace(
-        &self,
-        py: Python<'_>,
-        src_path: String,
-        dst_path: String,
-        ctx: Option<HashMap<String, String>>,
-    ) -> PyResult<HashMap<String, String>> {
-        let fs_ctx = build_fs_context(ctx);
-        let top = self.top.clone();
-        self.run_scoped(py, fs_ctx, move || async move {
-            top.replace(&src_path, &dst_path).await
-        })
-        .map_err(to_py_err)?;
-
-        let mut m = HashMap::new();
-        m.insert("message".to_string(), "replaced".to_string());
-        Ok(m)
-    }
-
     /// Attempt a same-mount verbatim copy and report whether the fast-path was used.
     #[pyo3(signature = (src_path, dst_path, ctx=None))]
     fn copy_within_mount(
