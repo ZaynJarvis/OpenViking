@@ -26,10 +26,8 @@ from openviking.storage.acl import (
     ACL_MODE_FIELD,
     AclAction,
     AclManager,
-    AclMode,
     AclUpdate,
-    acl_grant_tokens,
-    acl_principals,
+    acl_filter,
     is_acl_uri,
 )
 from openviking.storage.expr import And, Eq, FilterExpr, In, Or, PathScope, RawDSL
@@ -3135,38 +3133,10 @@ class VikingVectorIndexBackend:
                 ]
             )
 
-        controlled_modes = [AclMode.INHERIT.value, AclMode.RESTRICTED.value]
-        # Shared records written while ACL was disabled retain the root's
-        # default user:* manage access. Controlled descendants must match their
-        # own grants, including inherit nodes below a restricted boundary.
-        default_shared_filter = RawDSL(
-            {"op": "must_not", "field": ACL_MODE_FIELD, "conds": controlled_modes}
-        )
-        read_grants = acl_grant_tokens(acl_principals(ctx), AclAction.READ)
         shared_acl_filter = And(
             [
                 PathScope("uri", "viking://resources", depth=-1),
-                Or(
-                    [
-                        default_shared_filter,
-                        And(
-                            [
-                                In(ACL_MODE_FIELD, controlled_modes),
-                                Or(
-                                    [
-                                        In("acl_direct_grants", read_grants),
-                                        And(
-                                            [
-                                                Eq(ACL_MODE_FIELD, AclMode.INHERIT.value),
-                                                In("acl_inherited_grants", read_grants),
-                                            ]
-                                        ),
-                                    ]
-                                ),
-                            ]
-                        ),
-                    ]
-                ),
+                acl_filter(ctx, AclAction.READ),
             ]
         )
         access_filters: List[FilterExpr] = [

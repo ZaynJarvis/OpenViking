@@ -11,7 +11,6 @@ import pytest
 
 from openviking.server.identity import RequestContext, Role
 from openviking.storage.abstract_overview import parse_abstract_overview
-from openviking.storage.acl import AclEntry, AclLevel, AclMode, DirectAcl, EffectiveAcl
 from openviking.storage.viking_fs import VikingFS
 from openviking_cli.exceptions import (
     InvalidArgumentError,
@@ -19,6 +18,7 @@ from openviking_cli.exceptions import (
     PermissionDeniedError,
 )
 from openviking_cli.session.user_id import UserIdentifier
+from tests.storage.test_vector_transfer import _RealAclMemoryTransferBackend, _record
 
 
 def _ctx() -> RequestContext:
@@ -830,28 +830,25 @@ async def test_cp_requires_readable_source_and_manage_for_directory_merge(permis
     agfs.files["/local/acct/resources/target/only.txt"] = b"keep"
     if permission == "source_denied":
         agfs.files["/local/acct/resources/target/nested"] = b"type conflict"
-    denied = EffectiveAcl(AclMode.RESTRICTED, DirectAcl(), DirectAcl())
-    readable = EffectiveAcl(
-        AclMode.RESTRICTED, DirectAcl((AclEntry("user:alice", AclLevel.READ),)), DirectAcl()
+    target_grant = "3:user:alice" if permission == "target_write" else "7:user:alice"
+    backend = _RealAclMemoryTransferBackend(
+        [
+            _record("a-source", source, acl_mode="restricted", acl_direct_grants=["1:user:alice"]),
+            _record("b-target", target, acl_mode="restricted", acl_direct_grants=[target_grant]),
+            _record(
+                "c-secret",
+                f"{source}/nested/secret.md",
+                acl_mode="restricted",
+                acl_direct_grants=[] if permission == "source_denied" else ["1:user:alice"],
+            ),
+            # Neither absent files nor an older index level may block an otherwise readable copy.
+            _record(
+                "d-orphan", f"{source}/missing.md", acl_mode="restricted", acl_direct_grants=[]
+            ),
+            _record("e-stale-source", source, level=1, acl_mode="restricted", acl_direct_grants=[]),
+        ]
     )
-    target_level = AclLevel.WRITE if permission == "target_write" else AclLevel.MANAGE
-    target_acl = EffectiveAcl(
-        AclMode.RESTRICTED, DirectAcl((AclEntry("user:alice", target_level),)), DirectAcl()
-    )
-
-    async def resolve_many(uris, ctx):
-        return {
-            uri: target_acl
-            if uri == target
-            else readable
-            if uri.startswith(source)
-            and not (permission == "source_denied" and uri.endswith("secret.md"))
-            else denied
-            for uri in uris
-        }
-
-    acl = SimpleNamespace(is_enabled=AsyncMock(return_value=True), resolve_many=resolve_many)
-    fs = VikingFS(agfs=SimpleNamespace(), acl_manager=acl)
+    fs = VikingFS(agfs=SimpleNamespace(), vector_store=backend, acl_manager=backend.acl_manager)
     fs._async_agfs = agfs
     before = dict(agfs.files)
     ctx = _user_ctx()

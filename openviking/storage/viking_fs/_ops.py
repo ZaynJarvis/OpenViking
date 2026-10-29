@@ -468,6 +468,8 @@ class _OpsMixin:
         )
         operation_id = uuid.uuid4().hex
         try:
+            if is_dir:
+                await self._ensure_descendant_access(old_uri, ctx, action=AclAction.READ)
             source_uris = await self._prepare_transfer_entries(
                 old_uri, new_uri, is_dir=is_dir, move=False, ctx=ctx
             )
@@ -551,8 +553,8 @@ class _OpsMixin:
         ctx: Optional[RequestContext],
     ) -> List[str]:
         """Validate all affected entries under the lease before the first content write."""
-        entries: List[tuple[str, str, bool]] = []
-        # Copy checks the complete source list below; retain per-path namespace guards.
+        source_uris: List[str] = []
+        # Copy ACLs were checked under the lease; retain per-path namespace guards.
         guard_ctx = ctx if move else replace(self._ctx_or_default(ctx), bypass_acl=True)
 
         async def visit(source: str, target: str, directory: bool) -> None:
@@ -566,7 +568,10 @@ class _OpsMixin:
             else:
                 await self._ensure_copy_source_access(source, recursive=directory, ctx=guard_ctx)
             await self._ensure_access(target, guard_ctx, action=AclAction.WRITE)
-            entries.append((source, target, directory))
+            await self._ensure_transfer_target_type(
+                self._uri_to_path(target, ctx=ctx), target, is_dir=directory
+            )
+            source_uris.append(source)
             if directory:
                 # Match the copy traversal exactly; user content can use names
                 # that the namespace listing API hides, such as tasks/_system.
@@ -581,14 +586,6 @@ class _OpsMixin:
                     )
 
         await visit(old_uri, new_uri, is_dir)
-        source_uris = [source for source, _, _ in entries]
-        if not move and is_dir:
-            # The requested source was authorized before locking; check all descendants together.
-            await self._ensure_access_many(source_uris[1:], ctx, action=AclAction.READ)
-        for _, target, directory in entries:
-            await self._ensure_transfer_target_type(
-                self._uri_to_path(target, ctx=ctx), target, is_dir=directory
-            )
         return source_uris
 
     async def _ensure_copy_source_access(

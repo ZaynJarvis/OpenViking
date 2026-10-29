@@ -204,6 +204,9 @@ def _matches_filter(expr, record: dict[str, Any]) -> bool:
         if path[: len(root)] != root:
             return False
         return expr.depth == -1 or len(path) - len(root) <= expr.depth
+    if isinstance(expr, RawDSL) and expr.payload["op"] in {"must", "must_not"}:
+        matched = _matches_filter(In(expr.payload["field"], expr.payload["conds"]), record)
+        return matched if expr.payload["op"] == "must" else not matched
     if isinstance(expr, RawDSL) and expr.payload["op"] == "prefix":
         return str(record.get(expr.payload["field"], "")).startswith(expr.payload["prefix"])
     raise AssertionError(f"Unexpected filter expression in test: {expr!r}")

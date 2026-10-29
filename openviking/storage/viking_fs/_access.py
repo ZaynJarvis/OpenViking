@@ -323,6 +323,26 @@ class _AccessMixin:
                     resource=uri,
                 )
 
+    async def _ensure_descendant_access(
+        self, uri: str, ctx: Optional[RequestContext], *, action: AclAction
+    ) -> None:
+        """Check shared descendants after the requested node has been authorized."""
+        real_ctx = self._ctx_or_default(ctx)
+        if (
+            not is_acl_uri(uri)
+            or real_ctx.bypass_acl
+            or has_implicit_manage(real_ctx, uri)
+            or not await self._acl_enabled(real_ctx)
+        ):
+            return
+        async for denied in self.acl_manager.iter_denied_uris(uri, real_ctx, action=action):
+            # A leftover index entry or virtual chunk is not copied filesystem content.
+            if await self.exists(denied, ctx=real_ctx):
+                raise PermissionDeniedError(
+                    f"Access denied for {denied}: {action.value} permission required",
+                    resource=denied,
+                )
+
     async def _ensure_retrieval_scope(self, uri: str, ctx: Optional[RequestContext]) -> None:
         self._safe_uri_parts(uri)
         if await self._acl_enabled(ctx) and is_acl_uri(uri):
