@@ -1938,20 +1938,7 @@ class CompileVersions:
             or run["params"]["args"]["mode"] == "full"
         )
         manifest = await self._store.get_outputs(account_id, record["to"], run["operation_id"])
-        output_indexes = list(indexes.values())
-        for target in await self._targets_under(account_id, record["to"]):
-            if target["to"] != record["to"]:
-                output_indexes.extend(await self._indexes(account_id, target["to"]))
-        outputs = list((manifest or {}).get("outputs", [])) + [
-            {
-                "uri": version["snapshot_path"],
-                "version_id": version["version_id"],
-                "snapshot_id": version["snapshot_id"],
-            }
-            for index in output_indexes
-            for version in index["versions"]
-            if version["source"] == "compile" and version["meta"]["task_id"] == run_meta["task_id"]
-        ]
+        outputs = list((manifest or {}).get("outputs", []))
         recorded = {item["uri"] for item in outputs if item["snapshot_id"] is not None}
         try:
             # Ordinary edits can differ even when final output matches the start snapshot.
@@ -1960,6 +1947,7 @@ class CompileVersions:
                     continue
                 if uri in recorded:
                     continue
+                # shortcut: retries assume stable ownership; persist owners to support ownership changes.
                 owner = await self.owning_target(account_id, uri)
                 target_to = owner["to"] if owner is not None else record["to"]
                 index = (

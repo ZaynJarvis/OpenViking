@@ -37,6 +37,179 @@ def _mock_compile_processing(monkeypatch, service):
     monkeypatch.setattr(service.fs, "finalize_compile_directories", AsyncMock())
 
 
+async def _prepare_compile_version_publication(service, target):
+    """Create ``target`` in ``service`` and return context, versions, target record, and run.
+
+    Metadata uses the service store; content checks receive fixed snapshot bytes.
+    """
+    from openviking.service.compile_targets import CompileVersions
+
+    ctx = task_ctx(service.user.account_id, service.user.user_id)
+    store = service.compile.lifecycle.store
+    async with store.edit(ctx.account_id, target, create=True):
+        pass
+    versions = CompileVersions(
+        store,
+        SimpleNamespace(
+            exists=AsyncMock(return_value=True),
+            stat=AsyncMock(return_value={"isDir": False}),
+            read_file_bytes=AsyncMock(return_value=b"compiled"),
+            show=AsyncMock(return_value=b"compiled"),
+        ),
+    )
+    run = new_operation(
+        "compile-publication",
+        "manual_compile",
+        {
+            "from": ["viking://resources/source"],
+            "to": target,
+            "skill": "viking://agent/skills/compiler",
+            "args": {"mode": "incremental"},
+        },
+        ctx.user.user_id,
+    )
+    run["meta"] = {
+        "task_id": "cmp_publication",
+        "trigger": "manual",
+        "changed_roots": ["viking://resources/source"],
+    }
+    return ctx, versions, await store.get(ctx.account_id, target), run
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("nested", [False, True])
+async def test_compile_publication_reads_only_related_target_data(service, monkeypatch, nested):
+    """Unrelated targets and child file histories do not increase publication JSON reads."""
+    target = "viking://resources/publication"
+    child = f"{target}/child"
+    ctx, versions, record, run = await _prepare_compile_version_publication(service, target)
+    store = versions._store
+    async with store.edit(ctx.account_id, child, create=True):
+        pass
+    owner = child if nested else target
+    uri = f"{owner}/page.md"
+    changes = [{"uri": uri, "change_type": "added"}]
+    reads = AsyncMock(wraps=store.read_json)
+    indexes = AsyncMock(wraps=store.list_version_indexes)
+    monkeypatch.setattr(store, "read_json", reads)
+    monkeypatch.setattr(store, "list_version_indexes", indexes)
+    monkeypatch.setattr(
+        store, "list_summaries", AsyncMock(side_effect=AssertionError("Unexpected target scan"))
+    )
+
+    await versions.record_compile(ctx.account_id, record, run, "compiled-head", changes, ctx)
+    baseline_reads = reads.await_count
+    indexes.assert_awaited_once_with(ctx.account_id, target)
+    await store.delete_version_index(ctx.account_id, owner, uri)
+    await store.remove(store._outputs_path(ctx.account_id, target, run["operation_id"]))
+    for index in range(100):
+        sibling = f"{target}_other{index}"
+        async with store.edit(ctx.account_id, sibling, create=True):
+            pass
+        await store.put_version_index(
+            ctx.account_id,
+            child,
+            {"uri": f"{child}/unrelated{index}.md", "next": 1, "versions": []},
+        )
+    reads.reset_mock()
+    indexes.reset_mock()
+
+    await versions.record_compile(ctx.account_id, record, run, "compiled-head", changes, ctx)
+
+    assert reads.await_count == baseline_reads
+    indexes.assert_awaited_once_with(ctx.account_id, target)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("nested", [False, True])
+async def test_compile_publication_recovers_versions_without_output_manifest(
+    service, monkeypatch, nested
+):
+    """Retries reuse persisted versions and retain the parent run's existing output references."""
+    target = "viking://resources/retry-publication"
+    ctx, versions, record, run = await _prepare_compile_version_publication(service, target)
+    store = versions._store
+    owner = f"{target}/child" if nested else target
+    if nested:
+        async with store.edit(ctx.account_id, owner, create=True):
+            pass
+    uri = f"{owner}/page.md"
+    changes = [{"uri": uri, "change_type": "added"}]
+    saved = {"uri": f"{target}/saved.md", "version_id": "v7", "snapshot_id": "saved-head"}
+    await store.merge_outputs(ctx.account_id, target, run["operation_id"], [saved])
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "merge_outputs", AsyncMock(side_effect=OSError("Outputs unavailable")))
+        with pytest.raises(OSError, match="Outputs unavailable"):
+            await versions.record_compile(
+                ctx.account_id, record, run, "compiled-head", changes, ctx
+            )
+    persisted = await versions.load(ctx.account_id, owner, uri)
+    assert persisted["next"] == 2 and len(persisted["versions"]) == 1
+    assert (await versions.owning_target(ctx.account_id, uri))["to"] == owner
+    if nested:
+        assert await versions.load(ctx.account_id, target, uri) is None
+    for method in ("exists", "stat", "read_file_bytes", "show"):
+        monkeypatch.setattr(
+            versions._fs,
+            method,
+            AsyncMock(side_effect=AssertionError("Persisted versions do not read live content")),
+        )
+
+    await versions.record_compile(ctx.account_id, record, run, "compiled-head", changes, ctx)
+
+    expected = {
+        "outputs": sorted(
+            [saved, {"uri": uri, "version_id": "v1", "snapshot_id": "compiled-head"}],
+            key=lambda output: output["uri"],
+        )
+    }
+    assert await store.get_outputs(ctx.account_id, target, run["operation_id"]) == expected
+    assert await versions.load(ctx.account_id, owner, uri) == persisted
+    await versions.record_compile(ctx.account_id, record, run, "compiled-head", changes, ctx)
+    assert await versions.load(ctx.account_id, owner, uri) == persisted
+    assert await store.get_outputs(ctx.account_id, target, run["operation_id"]) == expected
+
+
+@pytest.mark.asyncio
+async def test_compile_publication_records_ordinary_files_without_snapshot_diff(
+    service, monkeypatch
+):
+    """Task-associated ordinary edits remain candidates when the final snapshot has no file diff."""
+    target = "viking://resources/ordinary-publication"
+    ctx, versions, record, run = await _prepare_compile_version_publication(service, target)
+    uri = f"{target}/page.md"
+    previous_root = "viking://resources/previous-source"
+    await versions.append(
+        ctx.account_id,
+        target,
+        uri,
+        "ordinary-head",
+        {
+            "source": "manual",
+            "actor": ctx.user.user_id,
+            "meta": {"task_id": run["meta"]["task_id"]},
+            "provenance": {"source_roots": [previous_root]},
+        },
+    )
+    changed = AsyncMock(return_value=True)
+    monkeypatch.setattr(versions, "_changed", changed)
+
+    await versions.record_compile(ctx.account_id, record, run, "compiled-head", [], ctx)
+
+    index = await versions.load(ctx.account_id, target, uri)
+    assert index["next"] == 3
+    assert [version["source"] for version in index["versions"]] == ["manual", "compile"]
+    assert index["versions"][-1]["provenance"]["source_roots"] == sorted(
+        [previous_root, *run["meta"]["changed_roots"]]
+    )
+    assert await versions._store.get_outputs(ctx.account_id, target, run["operation_id"]) == {
+        "outputs": [{"uri": uri, "version_id": "v2", "snapshot_id": "compiled-head"}]
+    }
+    await versions.record_compile(ctx.account_id, record, run, "compiled-head", [], ctx)
+    assert await versions.load(ctx.account_id, target, uri) == index
+    changed.assert_awaited_once_with(ctx, target, uri, "compiled-head")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("file_count", [1, 100])
 async def test_ordinary_writes_do_not_scan_compile_targets(monkeypatch, file_count):
