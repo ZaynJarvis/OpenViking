@@ -10,6 +10,8 @@ import pytest
 
 from openviking.server.identity import RequestContext, Role
 from openviking.server.routers import filesystem
+from openviking.service.task_tracker import TaskStatus, get_task_tracker
+from openviking.storage.errors import LockAcquisitionError, ResourceBusyError
 from openviking.storage.expr import PathScope
 from openviking_cli.exceptions import OpenVikingError
 
@@ -88,6 +90,12 @@ async def test_compile_directory_adds_missing_l0_under_lock(
     await service.viking_fs.write_file(f"{uri}/.overview.md", "Existing overview", ctx=ctx)
     ensured = await service.fs.ensure_directory_index(uri, ctx, "Fallback")
     assert ensured["indexed_levels"] == [1] and not ensured["created_abstract"]
+    tracker = get_task_tracker()
+    owner = {"account_id": ctx.account_id, "user_id": ctx.user.user_id}
+    public_tasks = await tracker.list_tasks(
+        task_type="ensure_directory_index", resource_id=uri, **owner
+    )
+    assert len(public_tasks) == 1 and not public_tasks[0].meta.get("internal")
     await service.fs.set_tags(
         uri, ["team=search", "compile_target=true"], mode="append", recursive=False, ctx=ctx
     )
@@ -114,6 +122,76 @@ async def test_compile_directory_adds_missing_l0_under_lock(
     assert "team=search" in next(
         record["search_tags"] for record in records if record["level"] == 1
     )
+    tasks = await tracker.list_tasks(task_type="ensure_directory_index", resource_id=uri, **owner)
+    internal_tasks = [task for task in tasks if task.meta.get("internal")]
+    assert len(internal_tasks) == 1
+    terminal = await tracker.wait(internal_tasks[0].task_id, timeout=1, **owner)
+    assert terminal.status is TaskStatus.COMPLETED
+    visible = await tracker.list_tasks(
+        task_type="ensure_directory_index", resource_id=uri, include_internal=False, **owner
+    )
+    assert [task.task_id for task in visible] == [public_tasks[0].task_id]
+
+
+@pytest.mark.parametrize("failure_stage", ["lock", "index"])
+async def test_compile_directory_failures_are_hidden_from_task_list(
+    client, service, monkeypatch, failure_stage
+):
+    """Compile bookkeeping stays diagnosable without crowding public task pages."""
+    ctx = RequestContext(user=service.user, role=Role.ROOT)
+    uri = "viking://resources/internal-compile-directory"
+    await service.viking_fs.mkdir(uri, ctx=ctx)
+    tracker = get_task_tracker()
+    owner = {"account_id": ctx.account_id, "user_id": ctx.user.user_id}
+    compile_task = await tracker.create("compile", resource_id=uri, **owner)
+    if failure_stage == "lock":
+        monkeypatch.setattr(
+            service.viking_fs._async_agfs,
+            "pathlock_acquire_tree",
+            AsyncMock(side_effect=LockAcquisitionError("directory busy")),
+        )
+        expected_error = ResourceBusyError
+    else:
+        monkeypatch.setattr(
+            "openviking.service.fs_service.vectorize_directory_meta",
+            AsyncMock(side_effect=OpenVikingError("index failed", code="PROCESSING_ERROR")),
+        )
+        expected_error = OpenVikingError
+
+    with pytest.raises(expected_error):
+        await service.fs.finalize_compile_directories(uri, ctx)
+
+    internal_tasks = await tracker.list_tasks(
+        task_type="ensure_directory_index", resource_id=uri, **owner
+    )
+    assert len(internal_tasks) == 1
+    internal_task = internal_tasks[0]
+    assert internal_task.meta.get("internal") is True
+    assert (
+        await tracker.wait(internal_task.task_id, timeout=1, **owner)
+    ).status is TaskStatus.FAILED
+
+    for pagination in (None, "cursor"):
+        params = {"resource_id": uri, "limit": 1}
+        if pagination:
+            params["pagination"] = pagination
+        response = await client.get("/api/v1/tasks", params=params)
+        assert response.status_code == 200
+        result = response.json()["result"]
+        items = result["items"] if pagination else result
+        assert [task["task_id"] for task in items] == [compile_task.task_id]
+        if pagination:
+            assert result["has_more"] is False and result["next_cursor"] is None
+
+        response = await client.get("/api/v1/tasks", params={**params, "include_internal": True})
+        assert response.status_code == 200
+        result = response.json()["result"]
+        items = result["items"] if pagination else result
+        assert items[0]["task_id"] == internal_task.task_id
+
+    response = await client.get(f"/api/v1/tasks/{internal_task.task_id}")
+    assert response.status_code == 200
+    assert response.json()["result"]["status"] == "failed"
 
 
 @pytest.mark.parametrize(

@@ -1725,6 +1725,7 @@ class FSService:
     ) -> Dict[str, Any]:
         """Index required summaries, rechecking missing content/indexes under the parent lock.
         Return index state; busy locks or invalid summaries raise.
+        ``require_abstract`` ensures Compile's L0 and marks its bookkeeping Task internal.
         """
         viking_fs = self._ensure_initialized()
         uri = validate_safe_viking_uri_path(uri)
@@ -1907,6 +1908,7 @@ class FSService:
             user_id=ctx.user.user_id,
             operation=execute,
             resource_id=uri,
+            meta={"internal": True} if require_abstract else None,
             wait=wait,
         )
         return result
