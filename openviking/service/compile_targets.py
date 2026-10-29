@@ -125,6 +125,8 @@ def new_record(target_id: str, to: str) -> Dict[str, Any]:
         "scheduled_progress": {},  # Successful scheduled inputs and source progress, isolated from manual runs.
         # Snapshot the per-file version indexes were last synced to.
         "versions_head": None,
+        # Snapshot identity represented by artifact_relations.json.
+        "wiki_head": None,
         "active_task_id": None,
         "last_run": None,
         "initial_operation_id": None,  # First registered Compile task; missing on legacy targets.
@@ -249,6 +251,9 @@ class CompileStateStore:
     def _record_path(self, account_id: str, target_id: str) -> str:
         return f"{self._target_dir(account_id, target_id)}/state.json"
 
+    def _artifact_relations_path(self, account_id: str, target_id: str) -> str:
+        return f"{self._target_dir(account_id, target_id)}/artifact_relations.json"
+
     def _operation_path(self, account_id: str, target_id: str, operation_id: str) -> str:
         return f"{self._target_dir(account_id, target_id)}/operations/{operation_id}.json"
 
@@ -275,6 +280,35 @@ class CompileStateStore:
         await self._ensure_parent(path, fs_ctx)
         data = json.dumps(value, ensure_ascii=False).encode("utf-8")
         await self._agfs.write(path, data, fs_ctx=fs_ctx)
+
+    async def read_artifact_relations(
+        self, account_id: str, target_id: str
+    ) -> Optional[Dict[str, Any]]:
+        value = await self.read_json(self._artifact_relations_path(account_id, target_id))
+        return value if isinstance(value, dict) else None
+
+    async def write_artifact_relations(
+        self, account_id: str, target_id: str, value: Dict[str, Any]
+    ) -> None:
+        """Publish a complete graph cache without exposing partial JSON."""
+        path = self._artifact_relations_path(account_id, target_id)
+        temp_path = f"{path}.{uuid4().hex}.tmp"
+        fs_ctx = fs_ctx_from_agfs_path(path)
+        await self._ensure_parent(path, fs_ctx)
+        data = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        await self._agfs.write(temp_path, data, fs_ctx=fs_ctx, auto_pathlock=False)
+        try:
+            await self._agfs.replace(
+                temp_path,
+                path,
+                fs_ctx=fs_ctx,
+                auto_pathlock=False,
+            )
+        finally:
+            try:
+                await self._agfs.rm(temp_path, force=True, fs_ctx=fs_ctx, auto_pathlock=False)
+            except (AGFSNotFoundError, FileNotFoundError):
+                pass
 
     @asynccontextmanager
     async def locked(self, path: str, inherited_lease: Any = None) -> AsyncIterator[Any]:
@@ -367,6 +401,7 @@ class CompileStateStore:
                     "scheduled_progress",
                     "schedule_configured",
                     "versions_head",
+                    "wiki_head",
                     "active_task_id",
                     "last_run",
                     "content_updated_at",
@@ -821,6 +856,7 @@ class CompileLifecycle:
         self.store = self._store = store
         self._fs = viking_fs
         self.versions = CompileVersions(store, viking_fs)
+        self.artifact_graph = None
         # Installed by CompileScheduler: async (account_id, record) -> None.
         self.reschedule = None
         # Installed by CompileScheduler: async (ctx) -> (executor, credential).
@@ -1247,6 +1283,9 @@ class CompileLifecycle:
                             await self.versions.record_compile(
                                 account_id, record, run, head, changes, ctx
                             )
+                            if head:
+                                await self._set_wiki_head(account_id, target_id, head)
+                                await self._build_artifact_graph(record, ctx, head)
                             if (
                                 any(is_versioned(change["uri"]) for change in changes)
                                 and (record.get("content_updated_at") or 0) < run["started_at"]
@@ -1331,6 +1370,7 @@ class CompileLifecycle:
                 synced = run_meta.get("target_head") or run_meta.get("target_base")
                 if synced:
                     record["versions_head"] = synced
+                    record["wiki_head"] = synced
             if record["active_task_id"] == task_id:
                 record["active_task_id"] = None
         if first_success and self.reschedule is not None:
@@ -1549,6 +1589,11 @@ class CompileLifecycle:
                 )
                 run_meta["rollback_head"] = run_meta["target_head"]
                 await self._store.put_operation(ctx.account_id, target_id, run)
+                if run_meta["target_head"]:
+                    await self._set_wiki_head(
+                        ctx.account_id, target_id, run_meta["target_head"]
+                    )
+                    await self._build_artifact_graph(record, ctx, run_meta["target_head"])
         finally:
             if restored or deleted:
                 try:
@@ -1570,6 +1615,20 @@ class CompileLifecycle:
         lease_ref: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         return await commit_snapshot(self._fs, paths, message, ctx, lease_ref=lease_ref)
+
+    async def _set_wiki_head(self, account_id: str, target_id: str, head: str) -> None:
+        async with self._store.edit(account_id, target_id) as record:
+            record["wiki_head"] = head
+
+    async def _build_artifact_graph(
+        self, record: Dict[str, Any], ctx: RequestContext, head: str
+    ) -> None:
+        if self.artifact_graph is None:
+            return
+        try:
+            await self.artifact_graph.build_locked(record, ctx, wiki_head=head)
+        except Exception:
+            logger.exception("Artifact relation graph build failed for %s", record["to"])
 
 
 async def retry_git(action: Any) -> Any:
@@ -2055,10 +2114,12 @@ class CompileVersions:
         if move and not await self._fs.exists(source_root, ctx=ctx):
             await self.after_move(source_root, destination, ctx)
         targets = []
+        records = []
         for target_id in context["targets"]:
             await self._store.mark_content_updated(ctx.account_id, target_id)
             record = await self._store.get(ctx.account_id, target_id)
-            if record and (await self._write_meta(ctx.account_id, record)).get("task_id"):
+            if record:
+                records.append(record)
                 targets.append(record["to"])
         if not targets:
             return
@@ -2089,6 +2150,10 @@ class CompileVersions:
                 }
             )
         await self.record_effects(effects, ctx)
+        if snapshot:
+            for record in records:
+                if not await self._running(ctx.account_id, record):
+                    await self._set_wiki_head(ctx.account_id, record["id"], snapshot)
 
     async def _managed(self, uri: str, ctx: RequestContext) -> Dict[str, Any]:
         record = await self.owning_target(ctx.account_id, uri)
@@ -2304,6 +2369,7 @@ class CompileVersions:
                 )
         written = await write() if write is not None else None
         changed = {}
+        ordinary_targets = set()
         context = _operation_outputs.get()
         for target_id, targets in grouped.items():
             targets = [
@@ -2350,6 +2416,7 @@ class CompileVersions:
                 (write is not None and not is_batch) or (write is None and is_batch)
             ):
                 await self._store.mark_content_updated(ctx.account_id, target_id)
+                ordinary_targets.add(target_id)
             if context and context["account_id"] == ctx.account_id:
                 context["changed"].update(targets)
                 if target_id in context["outputs"]:
@@ -2392,6 +2459,9 @@ class CompileVersions:
                                 "meta": run_entry,
                             },
                         )
+            if snapshot:
+                for target_id in ordinary_targets:
+                    await self._set_wiki_head(ctx.account_id, target_id, snapshot)
         finally:
             if edit_source != "compile":
                 await self.record_effects([], ctx)
@@ -2480,6 +2550,13 @@ class CompileVersions:
                 )
         finally:
             await self.record_effects(effects, ctx, metadata_lease=metadata_lease)
+        if snapshot:
+            target_ids = set()
+            for record, _ in files:
+                if not await self._running(ctx.account_id, record):
+                    target_ids.add(record["id"])
+            for target_id in target_ids:
+                await self._set_wiki_head(ctx.account_id, target_id, snapshot)
 
     async def _changed(self, ctx: RequestContext, target_id: str, uri: str, snapshot: str) -> bool:
         """Compare blob IDs at their recorded paths using the caller's identity.
@@ -2513,6 +2590,27 @@ class CompileVersions:
             if target is not None and target["id"] == source["id"]:
                 index["uri"] = to_uri + uri[len(from_uri) :]
                 await self._store.put_version_index(account_id, source["id"], index)
+
+    async def record_tree_change(
+        self,
+        uri: str,
+        ctx: RequestContext,
+        *,
+        lease_ref: Any,
+        message: str,
+    ) -> None:
+        """Advance the graph snapshot after a successful mkdir or remove."""
+        record = await self.owning_target(ctx.account_id, uri)
+        if record is None or await self._running(ctx.account_id, record):
+            return
+        snapshot = await self._commit([uri], message, ctx, lease_ref=lease_ref)
+        if snapshot:
+            await self._set_wiki_head(ctx.account_id, record["id"], snapshot)
+
+    async def _set_wiki_head(self, account_id: str, target_id: str, head: str) -> None:
+        async with self._store.edit(account_id, target_id) as record:
+            if record["status"] == "active":
+                record["wiki_head"] = head
 
     async def drop_all(self, account_id: str, target_id: str) -> None:
         await self._store.clear_output_data(account_id, target_id)
@@ -2704,6 +2802,8 @@ class CompileVersions:
                     },
                 )
                 result.update(uri=uri, version_id=version["version_id"], meta=dict(version["meta"]))
+            if snapshot:
+                await self._set_wiki_head(ctx.account_id, target_id, snapshot)
             return written
 
         target_id = record["id"]

@@ -15,6 +15,7 @@ from openviking.core.namespace import classify_uri, uri_parts
 from openviking.core.path_variables import resolve_path_variables
 from openviking.core.uri_validation import validate_request_viking_uri
 from openviking.server.identity import RequestContext
+from openviking.service.compile_graph import ArtifactGraphError, ArtifactRelationGraph
 from openviking.service.compile_targets import CompileLifecycle, UpdateSchedule
 from openviking.service.external_task_service import (
     ExternalTaskError,
@@ -319,10 +320,19 @@ class CompileService:
         self._local_endpoint: _CompileEndpoint | None = None
         self._memory_runner: MemoryCompileRunner | None = None
         self._lifecycle: CompileLifecycle | None = None
+        self._artifact_graph: ArtifactRelationGraph | None = None
 
     def configure_lifecycle(self, lifecycle: CompileLifecycle) -> None:
         """Enable target registry, incremental planning and scheduled updates."""
         self._lifecycle = lifecycle
+        self._artifact_graph = ArtifactRelationGraph(
+            lifecycle.store,
+            lifecycle._fs,
+            max_nodes=self._config.artifact_graph_max_nodes,
+            max_markdown_files=self._config.artifact_graph_max_markdown_files,
+            max_markdown_bytes=self._config.artifact_graph_max_markdown_bytes,
+        )
+        lifecycle.artifact_graph = self._artifact_graph
 
     @property
     def lifecycle(self) -> CompileLifecycle | None:
@@ -600,6 +610,37 @@ class CompileService:
 
     async def get_config(self, to: str, ctx: RequestContext) -> dict[str, Any]:
         return self._config_view(await self._target(to, ctx))
+
+    async def artifact_relations(self, to: str, ctx: RequestContext) -> dict[str, Any]:
+        lifecycle = self._require_lifecycle()
+        if self._artifact_graph is None:
+            raise UnavailableError("artifact relation graph", "Compile lifecycle is unavailable")
+        target = validate_request_viking_uri(
+            resolve_path_variables(to), ctx, field_name="to"
+        ).rstrip("/")
+        await lifecycle._fs._ensure_access(target, ctx)
+        record = await lifecycle.store.get_by_to(ctx.account_id, target)
+        if record is None:
+            raise ArtifactGraphError(
+                "Compile target not found",
+                code="COMPILE_TARGET_NOT_FOUND",
+                details={"to": target},
+            )
+
+        async def commit_graph_snapshot(uri: str, lease: Any) -> str | None:
+            return await lifecycle._commit(
+                [uri],
+                "artifact relation graph baseline",
+                ctx,
+                lease_ref=lease,
+            )
+
+        return await self._artifact_graph.get(
+            record,
+            ctx,
+            lock_output=lambda uri: lifecycle._locked_output(uri, ctx),
+            commit_snapshot=commit_graph_snapshot,
+        )
 
     async def update_config(self, body: "CompileConfigUpdate", ctx: RequestContext) -> dict:
         lifecycle = self._require_lifecycle()

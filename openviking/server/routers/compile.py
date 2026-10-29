@@ -57,6 +57,15 @@ async def get_compile_config(
     return Response(status="ok", result=await get_service().compile.get_config(to, ctx))
 
 
+@router.get("/compile/artifact-relations")
+async def get_artifact_relations(
+    to: str = Query(..., min_length=1),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    result = await get_service().compile.artifact_relations(to, ctx)
+    return Response(status="ok", result=result)
+
+
 @router.post("/compile/config/update")
 async def update_compile_config(
     body: CompileConfigUpdate,

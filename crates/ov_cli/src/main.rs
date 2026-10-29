@@ -348,6 +348,38 @@ enum AclCommands {
     },
 }
 
+#[derive(Args)]
+struct CompileArgs {
+    #[command(subcommand)]
+    action: Option<CompileCommands>,
+    /// Source file or directory; repeat the flag or separate entries with commas.
+    /// Omitted with `--skill memory`, which consolidates `--to` in place.
+    #[arg(long = "from", value_delimiter = ',', value_name = "uri")]
+    from_uris: Vec<String>,
+    /// Target resource directory or skills namespace
+    #[arg(long, value_name = "uri", required = true)]
+    to: Option<String>,
+    /// Skill directory or SKILL.md Viking URI; the literal `memory` runs memory consolidation
+    #[arg(long, value_name = "uri", required = true)]
+    skill: Option<String>,
+    /// Additional instructions for this Compile task
+    #[arg(long, value_name = "text")]
+    instruction: Option<String>,
+    /// Provider arguments as JSON; VikingBot wiki_links defaults to false
+    #[arg(long, value_name = "json")]
+    args: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum CompileCommands {
+    /// Query the artifact relation graph for an initialized Compile target
+    Graph {
+        /// Target resource directory
+        #[arg(long, value_name = "uri")]
+        to: String,
+    },
+}
+
 // Commands are organized with category tags in their doc comments.
 //
 // # Command Tagging System
@@ -1279,28 +1311,8 @@ enum Commands {
         no_history: bool,
     },
     /// [Interactive] Compile source materials with a VikingBot Skill
-    Compile {
-        /// Source file or directory; repeat the flag or separate entries with commas.
-        /// Omitted with `--skill memory`, which consolidates `--to` in place.
-        #[arg(
-            long = "from",
-            value_delimiter = ',',
-            value_name = "uri"
-        )]
-        from_uris: Vec<String>,
-        /// Target resource directory or skills namespace
-        #[arg(long, value_name = "uri")]
-        to: String,
-        /// Skill directory or SKILL.md Viking URI; the literal `memory` runs memory consolidation
-        #[arg(long, value_name = "uri")]
-        skill: String,
-        /// Additional instructions for this Compile task
-        #[arg(long, value_name = "text")]
-        instruction: Option<String>,
-        /// Provider arguments as JSON; VikingBot wiki_links defaults to false
-        #[arg(long, value_name = "json")]
-        args: Option<String>,
-    },
+    #[command(subcommand_negates_reqs = true)]
+    Compile(CompileArgs),
 
     // --- Status & Observability ---
     /// [Status] Wait for queued async processing to complete
@@ -3827,25 +3839,27 @@ async fn main() {
             };
             cmd.run().await
         }
-        Commands::Compile {
-            from_uris,
-            to,
-            skill,
-            instruction,
-            args,
-        } => {
+        Commands::Compile(args) => {
             let client = ctx.get_client();
-            commands::compile::run(
-                &client,
-                from_uris,
-                to,
-                skill,
-                instruction,
-                args,
-                ctx.output_format,
-                ctx.compact,
-            )
-            .await
+            match args.action {
+                Some(CompileCommands::Graph { to }) => {
+                    commands::compile::graph(&client, to, ctx.output_format, ctx.compact).await
+                }
+                None => {
+                    commands::compile::run(
+                        &client,
+                        args.from_uris,
+                        args.to.expect("--to is required without a subcommand"),
+                        args.skill
+                            .expect("--skill is required without a subcommand"),
+                        args.instruction,
+                        args.args,
+                        ctx.output_format,
+                        ctx.compact,
+                    )
+                    .await
+                }
+            }
         }
         Commands::Config { action } => handlers::handle_config(action, ctx).await,
         Commands::Language { .. } => unreachable!("language command is handled before config load"),
@@ -4069,9 +4083,9 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, CliContext, Commands, ConfigAddTarget, ConfigCommands, LanguageGateAction,
-        ObserverCommands, PrivacyCommands, SkillCommands, SnapshotCmd, UploadCliOptions,
-        find_command_index, first_command_token, is_language_command_request,
+        Cli, CliContext, Commands, CompileArgs, CompileCommands, ConfigAddTarget, ConfigCommands,
+        LanguageGateAction, ObserverCommands, PrivacyCommands, SkillCommands, SnapshotCmd,
+        UploadCliOptions, find_command_index, first_command_token, is_language_command_request,
         language_command_can_run_picker, language_gate_action, language_required_message,
         legacy_upload_option_error, plain_help_misuse, pre_parse_output_options,
         pre_parse_requires_cli_config_file, preprocess_cli_args, preprocess_privacy_args,
@@ -4337,17 +4351,14 @@ mod tests {
         ])
         .expect("compile flags should parse");
         match cli.command {
-            Commands::Compile {
-                from_uris,
-                skill,
-                instruction,
-                args,
-                ..
-            } => {
-                assert_eq!(from_uris.len(), 3);
-                assert_eq!(skill, "viking://agent/skills/wiki");
-                assert_eq!(instruction.as_deref(), Some("Keep supporting evidence."));
-                assert_eq!(args.as_deref(), Some(r#"{"model_name":"endpoint-1"}"#));
+            Commands::Compile(args) => {
+                assert_eq!(args.from_uris.len(), 3);
+                assert_eq!(args.skill.as_deref(), Some("viking://agent/skills/wiki"));
+                assert_eq!(
+                    args.instruction.as_deref(),
+                    Some("Keep supporting evidence.")
+                );
+                assert_eq!(args.args.as_deref(), Some(r#"{"model_name":"endpoint-1"}"#));
             }
             _ => panic!("expected compile command"),
         }
@@ -4408,16 +4419,27 @@ mod tests {
         ])
         .expect("memory-mode compile should parse without --from");
         match cli.command {
-            Commands::Compile {
-                from_uris, skill, ..
-            } => {
-                assert!(from_uris.is_empty());
-                assert_eq!(skill, "memory");
+            Commands::Compile(args) => {
+                assert!(args.from_uris.is_empty());
+                assert_eq!(args.skill.as_deref(), Some("memory"));
             }
             _ => panic!("expected compile command"),
         }
     }
 
+    #[test]
+    fn cli_compile_graph_parses_without_run_flags() {
+        let cli =
+            Cli::try_parse_from(["ov", "compile", "graph", "--to", "viking://resources/wiki"])
+                .expect("compile graph should parse");
+        match cli.command {
+            Commands::Compile(CompileArgs {
+                action: Some(CompileCommands::Graph { to }),
+                ..
+            }) => assert_eq!(to, "viking://resources/wiki"),
+            _ => panic!("expected compile graph command"),
+        }
+    }
 
     #[test]
     fn server_commands_require_existing_cli_config() {

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from openviking.server.identity import RequestContext, Role
+from openviking.service.compile_graph import ArtifactGraphError
 from openviking.service.compile_targets import CompileLifecycle, new_operation
 from openviking.service.external_task_service import ExternalTaskService
 from openviking.service.task_domain import TaskPatch
@@ -97,6 +98,64 @@ async def test_compile_api_rejects_system_target_without_creating_task(service, 
         for task in await tracker.list_tasks(task_type="compile", limit=None, **owner)
     }
     assert after == before
+
+
+@pytest.mark.asyncio
+async def test_artifact_relations_http_contract(service, app, client, monkeypatch):
+    from openviking.server.auth import get_request_context
+
+    ctx = RequestContext(user=service.user, role=Role.USER)
+    app.dependency_overrides[get_request_context] = lambda: ctx
+    graph = {
+        "schema_version": 1,
+        "to": "viking://resources/wiki",
+        "target_snapshot_id": "head",
+        "nodes": [],
+        "edges": [],
+    }
+    mocked = AsyncMock(return_value=graph)
+    monkeypatch.setattr(service.compile, "artifact_relations", mocked)
+
+    response = await client.get(
+        "/api/v1/compile/artifact-relations",
+        params={"to": "viking://resources/wiki"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["result"] == graph
+    mocked.assert_awaited_once_with("viking://resources/wiki", ctx)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "expected_status"),
+    [
+        ("COMPILE_TARGET_NOT_FOUND", 404),
+        ("COMPILE_TARGET_NOT_INITIALIZED", 412),
+        ("ARTIFACT_RELATIONS_TOO_LARGE", 413),
+        ("ARTIFACT_RELATIONS_BUILD_FAILED", 500),
+    ],
+)
+async def test_artifact_relations_http_error_mapping(
+    service, app, client, monkeypatch, code, expected_status
+):
+    from openviking.server.auth import get_request_context
+
+    ctx = RequestContext(user=service.user, role=Role.USER)
+    app.dependency_overrides[get_request_context] = lambda: ctx
+    monkeypatch.setattr(
+        service.compile,
+        "artifact_relations",
+        AsyncMock(side_effect=ArtifactGraphError("graph failed", code=code)),
+    )
+
+    response = await client.get(
+        "/api/v1/compile/artifact-relations",
+        params={"to": "viking://resources/wiki"},
+    )
+
+    assert response.status_code == expected_status
+    assert response.json()["error"]["code"] == code
 
 
 @pytest.mark.asyncio
@@ -379,6 +438,7 @@ async def test_http_contract_preserves_retries_and_compile_target_lifecycle(
     store = service.compile.lifecycle.store
     initial_state = await store.get_by_to(ctx.account_id, target)
     assert initial_state["auto_update"] is False and initial_state["update_schedule"] is None
+    assert initial_state["wiki_head"]
     target_id = initial_state["id"]
     with monkeypatch.context() as patch:
         summary = (await store.list_summaries(ctx.account_id))[0]
@@ -393,6 +453,7 @@ async def test_http_contract_preserves_retries_and_compile_target_lifecycle(
     operation = await store.get_operation(ctx.account_id, target_id, first)
     checkpoint = dict(operation["meta"])
     assert checkpoint["snapshot_committed"] and checkpoint["target_head"]
+    assert initial_state["wiki_head"] == checkpoint["target_head"]
     assert (checkpoint["skill_snapshot"]["snapshot_id"] is None) == builtin_skill
     assert checkpoint["reindex_task_id"]
     versions_before_resume = await store.list_version_indexes(ctx.account_id, target_id)
@@ -533,6 +594,7 @@ async def test_http_contract_preserves_retries_and_compile_target_lifecycle(
     assert {"execution", "skill_snapshot"}.isdisjoint(cancelled_operation["meta"])
 
     # Binary version restore is guarded by the version the caller last observed.
+    wiki_head_before_batch = (await store.get_by_to(ctx.account_id, target))["wiki_head"]
     await service.fs.batch_write(
         root_uri=target,
         operations=[
@@ -542,6 +604,7 @@ async def test_http_contract_preserves_retries_and_compile_target_lifecycle(
         defer_processing=True,
     )
     state = await store.get_by_to(ctx.account_id, target)
+    assert state["wiki_head"] != wiki_head_before_batch
     target_id = state["id"]
     indexes = await store.list_version_indexes(ctx.account_id, target_id)
     assert tracker.compile_history_cleanup == store.delete_expired
@@ -560,6 +623,7 @@ async def test_http_contract_preserves_retries_and_compile_target_lifecycle(
     restored = await client.post("/api/v1/snapshot/restore", json=restore)
     assert restored.status_code == 200, restored.text
     assert restored.json()["result"]["meta"]["restored_from"] == restore["restore_version"]
+    assert (await store.get_by_to(ctx.account_id, target))["wiki_head"] != state["wiki_head"]
     await service.resources.wait_processed()
     assert await service.fs.read_file_bytes(picture, ctx) == png
     assert (await client.post("/api/v1/snapshot/restore", json=restore)).status_code == 409

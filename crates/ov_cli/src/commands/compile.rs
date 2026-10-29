@@ -37,6 +37,17 @@ pub async fn run(
     Ok(())
 }
 
+pub async fn graph(
+    client: &HttpClient,
+    to: String,
+    output_format: OutputFormat,
+    compact: bool,
+) -> Result<()> {
+    let graph = client.artifact_relations(to.trim()).await?;
+    output_success(graph, output_format, compact);
+    Ok(())
+}
+
 fn parse_args(value: Option<&str>) -> Result<Option<Map<String, Value>>> {
     let Some(value) = value else {
         return Ok(None);

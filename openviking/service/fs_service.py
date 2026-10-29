@@ -481,6 +481,13 @@ class FSService:
                             viking_fs._uri_to_path(abstract_uri, ctx=ctx)
                         )
                     await initialize(acl_update, lease)
+                    if managed:
+                        await versions.record_tree_change(
+                            directory_uri,
+                            ctx,
+                            lease_ref=lease,
+                            message="ordinary mkdir",
+                        )
                 finally:
                     if lease is not None:
                         await viking_fs._async_agfs.pathlock_release(lease)
@@ -600,6 +607,13 @@ class FSService:
                         ctx=delete_ctx,
                         **({"lease_ref": lease} if lease is not None else {}),
                     )
+                    if lease is not None:
+                        await self.compile_versions.record_tree_change(
+                            uri,
+                            ctx,
+                            lease_ref=lease,
+                            message="ordinary remove",
+                        )
                     await self.compile_versions.record_effects(
                         [{"uri": uri, "kind": "deleted"}], ctx
                     )

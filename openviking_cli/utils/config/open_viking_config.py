@@ -205,6 +205,9 @@ class CompileApiConfig(BaseModel):
     # Run Redis-backed Compile scheduling on this instance.
     scheduler_enabled: bool = False
     scheduler_backend: Literal["redis"] = "redis"
+    artifact_graph_max_nodes: int = 10000
+    artifact_graph_max_markdown_files: int = 2000
+    artifact_graph_max_markdown_bytes: int = 50 * 1024 * 1024
 
     @model_validator(mode="after")
     def _validate(self) -> "CompileApiConfig":
@@ -214,6 +217,13 @@ class CompileApiConfig(BaseModel):
             raise ValueError("compile_api.http_timeout_seconds must be > 0")
         if self.poll_interval_ms <= 0:
             raise ValueError("compile_api.poll_interval_ms must be > 0")
+        for name in (
+            "artifact_graph_max_nodes",
+            "artifact_graph_max_markdown_files",
+            "artifact_graph_max_markdown_bytes",
+        ):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"compile_api.{name} must be > 0")
         self.base_url = self.base_url.rstrip("/")
         return self
 

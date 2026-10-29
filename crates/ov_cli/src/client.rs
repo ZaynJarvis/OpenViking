@@ -361,6 +361,12 @@ impl HttpClient {
         self.post("/api/v1/compile", &body).await
     }
 
+    pub async fn artifact_relations(&self, to: &str) -> Result<Value> {
+        let params = vec![("to".to_string(), to.to_string())];
+        self.get("/api/v1/compile/artifact-relations", &params)
+            .await
+    }
+
     pub async fn read(&self, uri: &str) -> Result<String> {
         let params = vec![("uri".to_string(), uri.to_string())];
         self.get("/api/v1/content/read", &params).await
