@@ -10,6 +10,7 @@ import pytest
 
 from openviking.server.identity import RequestContext, Role
 from openviking.server.routers import filesystem
+from openviking.service import fs_service
 from openviking.service.task_tracker import TaskStatus, get_task_tracker
 from openviking.storage.errors import LockAcquisitionError, ResourceBusyError
 from openviking.storage.expr import PathScope
@@ -221,6 +222,7 @@ async def test_compile_directory_rejects_missing_required_index(service, monkeyp
         AsyncMock(return_value={"vector_status": "complete", "indexed_levels": [0]}),
     )
     monkeypatch.setattr(service.fs, "_directory_index_records", AsyncMock(return_value=records))
+    monkeypatch.setattr(fs_service, "_COMPILE_DIRECTORY_TAG_TIMEOUT_SECONDS", 0, raising=False)
     set_tags = AsyncMock(side_effect=AssertionError("Already tagged records need no update"))
     monkeypatch.setattr(service.fs, "set_tags", set_tags)
 

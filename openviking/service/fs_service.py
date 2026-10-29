@@ -87,6 +87,10 @@ from openviking_cli.utils.config import get_openviking_config
 
 logger = get_logger(__name__)
 
+# Compile waits for directory search visibility without rerunning generation.
+_COMPILE_DIRECTORY_TAG_TIMEOUT_SECONDS = 60.0
+_COMPILE_DIRECTORY_TAG_POLL_SECONDS = 3.0
+
 
 @dataclass
 class ListingPage:
@@ -1944,8 +1948,10 @@ class FSService:
         return result
 
     async def finalize_compile_directories(self, uri: str, ctx: RequestContext) -> Dict[str, Any]:
-        """Ensure indexed L0 and tag unmarked summaries; return directory_count.
-        Denied paths or incomplete indexing raise.
+        """Ensure L0 and tag directory summaries under ``uri`` using ``ctx`` permissions.
+
+        Return directory_count after required indexes and tags are search-visible.
+        Denied paths, store errors, or visibility exceeding the per-directory deadline raise.
         """
         viking_fs = self._ensure_initialized()
         uri = validate_safe_viking_uri_path(uri)
@@ -1990,26 +1996,55 @@ class FSService:
                     )
                 ensured = terminal.result or {}
                 ContentWriteCoordinator._raise_refresh_errors(ensured.get("queue_status", {}))
-            records = await self._directory_index_records(directory, ctx)
-            if any(
-                "compile_target=true" not in (record.get("search_tags") or []) for record in records
-            ):
-                await self.set_tags(
-                    directory, ["compile_target=true"], mode="append", recursive=False, ctx=ctx
-                )
+            expected_levels = set(ensured["indexed_levels"])
+            applied_levels: set[int] = set()
+            set_tags_result = None
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + _COMPILE_DIRECTORY_TAG_TIMEOUT_SECONDS
+            while True:
                 records = await self._directory_index_records(directory, ctx)
-            tagged_levels = {
-                record["level"]
-                for record in records
-                if "compile_target=true" in (record.get("search_tags") or [])
-            }
-            expected_levels = set(ensured["indexed_levels"]) | {
-                record["level"] for record in records
-            }
-            if not expected_levels or expected_levels - tagged_levels:
-                raise OpenVikingError(
-                    f"Compile directory tags are incomplete: {directory}", code="PROCESSING_ERROR"
-                )
+                actual_levels = {record["level"] for record in records}
+                # A temporarily invisible summary remains required once observed.
+                expected_levels.update(actual_levels)
+                untagged_levels = {
+                    record["level"]
+                    for record in records
+                    if "compile_target=true" not in (record.get("search_tags") or [])
+                }
+                if untagged_levels - applied_levels:
+                    set_tags_result = await self.set_tags(
+                        directory, ["compile_target=true"], mode="append", recursive=False, ctx=ctx
+                    )
+                    # Only both updates identify the written levels across different read paths.
+                    if set_tags_result.get("success_count", 0) >= 2:
+                        applied_levels.update({0, 1})
+                    records = await self._directory_index_records(directory, ctx)
+                    actual_levels = {record["level"] for record in records}
+                    expected_levels.update(actual_levels)
+                tagged_levels = {
+                    record["level"]
+                    for record in records
+                    if "compile_target=true" in (record.get("search_tags") or [])
+                }
+                if expected_levels and not expected_levels - tagged_levels:
+                    break
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    details = {
+                        "directory": directory,
+                        "expected_levels": sorted(expected_levels),
+                        "actual_levels": sorted(actual_levels),
+                        "tagged_levels": sorted(tagged_levels),
+                        "records": records,
+                        "set_tags_result": set_tags_result,
+                    }
+                    logger.error("Compile directory tag validation timed out: %s", details)
+                    raise OpenVikingError(
+                        f"Compile directory tags are incomplete: {directory}",
+                        code="PROCESSING_ERROR",
+                        details=details,
+                    )
+                await asyncio.sleep(min(_COMPILE_DIRECTORY_TAG_POLL_SECONDS, remaining))
         return {"directory_count": len(directories)}
 
     async def get_acl(self, uri: str, ctx: RequestContext) -> Dict[str, Any]:
