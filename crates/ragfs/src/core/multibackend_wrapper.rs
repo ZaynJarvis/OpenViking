@@ -646,6 +646,32 @@ impl FileSystem for MultiWriteWrappedFS {
         Ok(())
     }
 
+    /// Atomically replace a primary file and queue its resulting file-state events.
+    async fn replace(&self, src_path: &str, dst_path: &str) -> Result<()> {
+        let src_ctx = self.resolve_context(src_path)?;
+        let dst_ctx = self.resolve_context(dst_path)?;
+        if src_ctx.account_id() != dst_ctx.account_id() {
+            return Err(Error::invalid_path(format!(
+                "replace paths cross accounts: '{}' -> '{}'",
+                src_path, dst_path
+            )));
+        }
+        let source = self.inner.primary.backend.stat(src_path).await?;
+        let events = rename_event_specs(&source, src_path, dst_path)
+            .into_iter()
+            .map(|(kind, path, destination)| self.pending_event(path, kind, destination))
+            .collect::<Result<Vec<_>>>()?;
+        self.inner
+            .primary
+            .backend
+            .replace(src_path, dst_path)
+            .await?;
+        for event in events {
+            self.submit_event(event);
+        }
+        Ok(())
+    }
+
     /// Change primary permissions and queue a write event after success.
     async fn chmod(&self, path: &str, mode: u32) -> Result<()> {
         let event = self.pending_event(path, SegmentEventType::Write, None)?;

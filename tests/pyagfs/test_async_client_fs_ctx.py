@@ -51,6 +51,16 @@ class _RecordingClient:
         self.tree_options = options
         return []
 
+    def replace(
+        self,
+        src_path: str,
+        dst_path: str,
+        *,
+        ctx: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        self.calls.append(("replace", f"{src_path}->{dst_path}", ctx))
+        return {"message": "replaced"}
+
 
 @pytest.mark.asyncio
 async def test_async_client_derives_account_ctx_from_local_agfs_path() -> None:
@@ -120,6 +130,36 @@ async def test_async_client_rejects_cross_account_mv() -> None:
 
     with pytest.raises(ValueError, match="cross-account"):
         await agfs.mv("/local/a/data/file.txt", "/local/b/data/file.txt")
+
+
+@pytest.mark.asyncio
+async def test_async_client_replace_preserves_lease_context() -> None:
+    client = _RecordingClient()
+    agfs = AsyncAGFSClient(client)
+
+    await agfs.replace(
+        "/local/acct/data/cache.tmp",
+        "/local/acct/data/cache.json",
+        fs_ctx={"account_id": "acct", "lease_ref": "lease"},
+        auto_pathlock=False,
+    )
+
+    assert client.calls == [
+        (
+            "replace",
+            "/local/acct/data/cache.tmp->/local/acct/data/cache.json",
+            {"account_id": "acct", "lease_ref": "lease"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_async_client_rejects_cross_account_replace() -> None:
+    client = _RecordingClient()
+    agfs = AsyncAGFSClient(client)
+
+    with pytest.raises(ValueError, match="cross-account"):
+        await agfs.replace("/local/a/data/cache.tmp", "/local/b/data/cache.json")
 
 
 @pytest.mark.asyncio
