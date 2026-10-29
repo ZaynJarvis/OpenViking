@@ -68,6 +68,7 @@ from openviking_cli.exceptions import (
     FailedPreconditionError,
     InvalidArgumentError,
     NotFoundError,
+    PermissionDeniedError,
 )
 from openviking_cli.session.user_id import UserIdentifier
 from openviking_cli.utils import VikingURI, get_logger
@@ -807,6 +808,8 @@ class CompileLifecycle:
         self.reschedule = None
         # Installed by CompileScheduler: async (ctx) -> (executor, credential).
         self.save_credential = None
+        # Server callback: async (account_id, user_id) -> current groups.
+        self.resolve_groups = None
 
     # ---------- submission ----------
 
@@ -1407,11 +1410,10 @@ class CompileLifecycle:
             await self.reschedule(account_id, record)
 
     async def _rollback(self, to: str, run: Dict[str, Any], ctx: RequestContext) -> None:
-        """Restore only ``to`` to the run's start snapshot, discarding intermediate edits.
+        """Restore ``to`` to ``run``'s baseline; ``ctx`` provides snapshot access.
 
-        The tree lease settles in-flight writes. A durable rollback head prevents a
-        repeated completion from undoing later writes; failed restoration is retried.
-        Paths outside ``to`` and target registration metadata are unchanged.
+        Writes enforce the owner's USER ACL. Denied paths are recorded; storage
+        errors propagate. A persisted head makes completion idempotent.
         """
         run_meta = run["meta"]
         restored, deleted = [], []
@@ -1420,6 +1422,16 @@ class CompileLifecycle:
                 if run_meta.get("rollback_head"):
                     run_meta["target_head"] = run_meta["rollback_head"]
                     return
+                actor_ctx = RequestContext(
+                    user=ctx.user,
+                    role=Role.USER,
+                    bypass_acl=False,
+                    group_ids=(
+                        tuple(await self.resolve_groups(ctx.account_id, ctx.user.user_id))
+                        if self.resolve_groups is not None
+                        else ()
+                    ),
+                )
                 head = await self._commit(
                     [to],
                     f"compile {run_meta['task_id']} rollback point",
@@ -1432,26 +1444,84 @@ class CompileLifecycle:
                 changes = await self._fs.diff_paths(
                     dirs=[to], base=run_meta["target_base"], head=head, ctx=ctx
                 )
+                access = await self._fs._can_access_many(
+                    [change["uri"] for change in changes], actor_ctx, action=AclAction.WRITE
+                )
+                skipped = {uri for uri, allowed in access.items() if not allowed}
+                # Check replacements before deleting any descendants.
+                for change in changes:
+                    uri = change["uri"]
+                    if uri in skipped or not await self._fs.exists(uri, ctx=ctx):
+                        continue
+                    is_dir = (await self._fs.stat(uri, ctx=ctx, skip_count=True)).get("isDir")
+                    # Deletion removes direct grants; rebuilding needs parent write access.
+                    replaces_node = (is_dir and change["change_type"] != "added") or (
+                        change["change_type"] == "added"
+                        and any(
+                            other["change_type"] != "added"
+                            and uri_matches_prefix(other["uri"], uri)
+                            for other in changes
+                        )
+                    )
+                    if replaces_node:
+                        parent_access = await self._fs._can_access_many(
+                            [uri.rsplit("/", 1)[0]], actor_ctx, action=AclAction.WRITE
+                        )
+                    else:
+                        parent_access = {}
+                    if is_dir:
+                        descendants = await self._fs._collect_uris(
+                            self._fs._uri_to_path(uri, ctx=ctx), True, ctx=ctx, strict=True
+                        )
+                        permissions = await self._fs._can_access_many(
+                            [uri, *descendants], actor_ctx, action=AclAction.MANAGE
+                        )
+                        if not all(permissions.values()):
+                            skipped.add(uri)
+                    if not all(parent_access.values()):
+                        skipped.add(uri)
+                applied = set()
                 for change in sorted(
                     changes, key=lambda item: item["uri"].count("/"), reverse=True
                 ):
                     uri = change["uri"]
+                    if any(uri_matches_prefix(uri, denied) for denied in skipped):
+                        skipped.add(uri)
+                        continue
                     if change["change_type"] == "added" and await self._fs.exists(uri, ctx=ctx):
-                        await self._fs.rm(uri, recursive=True, ctx=ctx, lease_ref=lease)
+                        try:
+                            await self._fs.rm(uri, recursive=True, ctx=actor_ctx, lease_ref=lease)
+                        except PermissionDeniedError:
+                            skipped.add(uri)
+                            continue
                         deleted.append(self._fs._uri_to_tree_path(uri, ctx=ctx))
+                        applied.add(uri)
                 for change in sorted(changes, key=lambda item: item["uri"].count("/")):
                     if change["change_type"] == "added":
                         continue
                     uri = change["uri"]
+                    if any(uri_matches_prefix(uri, denied) for denied in skipped):
+                        skipped.add(uri)
+                        continue
                     content = await self._fs.show(run_meta["target_base"], path=uri, ctx=ctx)
-                    if await self._fs.exists(uri, ctx=ctx):
-                        if (await self._fs.stat(uri, ctx=ctx, skip_count=True)).get("isDir"):
-                            await self._fs.rm(uri, recursive=True, ctx=ctx, lease_ref=lease)
-                            deleted.append(self._fs._uri_to_tree_path(uri, ctx=ctx))
-                        elif await self._fs.read_file_bytes(uri, ctx=ctx) == content:
-                            continue
-                    await self._fs.write_file_bytes(uri, content, ctx=ctx, lease_ref=lease)
+                    try:
+                        if await self._fs.exists(uri, ctx=ctx):
+                            if (await self._fs.stat(uri, ctx=ctx, skip_count=True)).get("isDir"):
+                                await self._fs.rm(
+                                    uri, recursive=True, ctx=actor_ctx, lease_ref=lease
+                                )
+                                deleted.append(self._fs._uri_to_tree_path(uri, ctx=ctx))
+                                applied.add(uri)
+                            elif await self._fs.read_file_bytes(uri, ctx=ctx) == content:
+                                continue
+                        await self._fs.write_file_bytes(
+                            uri, content, ctx=actor_ctx, lease_ref=lease
+                        )
+                    except PermissionDeniedError:
+                        skipped.add(uri)
+                        continue
                     restored.append(self._fs._uri_to_tree_path(uri, ctx=ctx))
+                    applied.add(uri)
                 rollback_head = await self._commit(
                     [to],
                     f"compile {run_meta['task_id']} rollback",
@@ -1462,9 +1532,11 @@ class CompileLifecycle:
                 if not rollback_head:
                     raise FailedPreconditionError("Compile rollback snapshot is unavailable")
                 await self.versions.reconcile_rollback(
-                    to, rollback_head, ctx, changed_uris=[change["uri"] for change in changes]
+                    to, rollback_head, ctx, changed_uris=sorted(applied)
                 )
                 run_meta["target_head"] = run_meta["rollback_head"] = rollback_head
+                run_meta["rollback_skipped"] = sorted(skipped)  # Paths retained by ACL.
+                run_meta["rollback_complete"] = not skipped  # False for partial rollback.
                 await self._store.put_operation(ctx.account_id, to, run)
         finally:
             if restored or deleted:

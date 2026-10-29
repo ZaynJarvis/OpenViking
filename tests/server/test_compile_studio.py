@@ -808,6 +808,8 @@ async def test_http_contract_preserves_retries_and_compile_target_lifecycle(
         "diff_dirs",
         "full_dirs",
         "rollback_head",
+        "rollback_complete",
+        "rollback_skipped",
     }
     ordinary_operation = next(
         op for op in history["operations"] if op["operation_type"] == "manual_revise"

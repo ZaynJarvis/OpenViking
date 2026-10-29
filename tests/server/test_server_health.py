@@ -104,7 +104,17 @@ async def test_health_endpoint_without_api_key():
 
 
 @pytest.mark.parametrize(
-    "credentials", ["anonymous", "partial", "trusted", "keyed", "malformed", "asserted-root", "root-only", "invalid-root-only"]
+    "credentials",
+    [
+        "anonymous",
+        "partial",
+        "trusted",
+        "keyed",
+        "malformed",
+        "asserted-root",
+        "root-only",
+        "invalid-root-only",
+    ],
 )
 async def test_health_trusted_identity_contract(credentials, caplog, service):
     app = create_app(
@@ -339,6 +349,7 @@ async def test_initialize_runtime_state_loads_api_key_manager(monkeypatch):
             self._initialized = False
             self.viking_fs = object()
             self._queue_manager = None
+            self.compile = SimpleNamespace(lifecycle=SimpleNamespace(resolve_groups=None))
 
         async def initialize(self):
             self._initialized = True
@@ -352,7 +363,7 @@ async def test_initialize_runtime_state_loads_api_key_manager(monkeypatch):
             events.append("system-assets")
             return 1
 
-    manager = object()
+    manager = SimpleNamespace(get_user_group_ids=AsyncMock(return_value=("editors",)))
 
     async def setup(**kwargs):
         assert kwargs["manager"] is manager
@@ -374,6 +385,7 @@ async def test_initialize_runtime_state_loads_api_key_manager(monkeypatch):
 
     assert service._initialized is True
     assert app.state.api_key_manager is manager
+    assert service.compile.lifecycle.resolve_groups is manager.get_user_group_ids
     assert events == [
         "service",
         "agent-evolution",
