@@ -1912,7 +1912,7 @@ class FSService:
         return result
 
     async def finalize_compile_directories(self, uri: str, ctx: RequestContext) -> Dict[str, Any]:
-        """Ensure indexed L0 and append tags; return directory_count.
+        """Ensure indexed L0 and tag unmarked summaries; return directory_count.
         Denied paths or incomplete indexing raise.
         """
         viking_fs = self._ensure_initialized()
@@ -1958,10 +1958,14 @@ class FSService:
                     )
                 ensured = terminal.result or {}
                 ContentWriteCoordinator._raise_refresh_errors(ensured.get("queue_status", {}))
-            await self.set_tags(
-                directory, ["compile_target=true"], mode="append", recursive=False, ctx=ctx
-            )
             records = await self._directory_index_records(directory, ctx)
+            if any(
+                "compile_target=true" not in (record.get("search_tags") or []) for record in records
+            ):
+                await self.set_tags(
+                    directory, ["compile_target=true"], mode="append", recursive=False, ctx=ctx
+                )
+                records = await self._directory_index_records(directory, ctx)
             tagged_levels = {
                 record["level"]
                 for record in records

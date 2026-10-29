@@ -11,6 +11,7 @@ import pytest
 from openviking.server.identity import RequestContext, Role
 from openviking.server.routers import filesystem
 from openviking.storage.expr import PathScope
+from openviking_cli.exceptions import OpenVikingError
 
 
 async def _first_file_uri(client, root_uri: str) -> str:
@@ -51,8 +52,14 @@ async def test_ensure_directory_index_preserves_content_and_tags(client, service
     await service.fs.set_tags(uri, ["team=search"], mode="append", recursive=False, ctx=ctx)
     acquire = AsyncMock(side_effect=AssertionError("Complete directory indexes need no tree lock"))
     monkeypatch.setattr(service.viking_fs._async_agfs, "pathlock_acquire_tree", acquire)
+    store = service.viking_fs._get_vector_store()
+    update_tags = AsyncMock(wraps=store.update_search_tags)
+    monkeypatch.setattr(store, "update_search_tags", update_tags)
     await service.fs.finalize_compile_directories(uri, ctx)
+    assert update_tags.await_count == 2
+    update_tags.reset_mock()
     await service.fs.finalize_compile_directories(uri, ctx)
+    update_tags.assert_not_awaited()
     assert await service.viking_fs.read_file(f"{uri}/.abstract.md", ctx=ctx) == original
     records = await service.vikingdb_manager.filter(
         filter=PathScope("uri", uri), output_fields=["uri", "level", "search_tags"], ctx=ctx
@@ -81,7 +88,9 @@ async def test_compile_directory_adds_missing_l0_under_lock(
     await service.viking_fs.write_file(f"{uri}/.overview.md", "Existing overview", ctx=ctx)
     ensured = await service.fs.ensure_directory_index(uri, ctx, "Fallback")
     assert ensured["indexed_levels"] == [1] and not ensured["created_abstract"]
-    await service.fs.set_tags(uri, ["team=search"], mode="append", recursive=False, ctx=ctx)
+    await service.fs.set_tags(
+        uri, ["team=search", "compile_target=true"], mode="append", recursive=False, ctx=ctx
+    )
     original_acquire = service.viking_fs._async_agfs.pathlock_acquire_tree
 
     async def acquire_with_summary(path):
@@ -105,6 +114,32 @@ async def test_compile_directory_adds_missing_l0_under_lock(
     assert "team=search" in next(
         record["search_tags"] for record in records if record["level"] == 1
     )
+
+
+@pytest.mark.parametrize(
+    "records",
+    [[], [{"level": 1, "search_tags": ["compile_target=true"]}]],
+    ids=["empty", "missing_l0"],
+)
+async def test_compile_directory_rejects_missing_required_index(service, monkeypatch, records):
+    """Tagged visible records cannot substitute for a missing required L0 index."""
+    ctx = RequestContext(user=service.user, role=Role.ROOT)
+    uri = "viking://resources/compile-missing-index"
+    await service.viking_fs.mkdir(uri, ctx=ctx)
+    monkeypatch.setattr(
+        service.fs,
+        "_ensure_directory_index",
+        AsyncMock(return_value={"vector_status": "complete", "indexed_levels": [0]}),
+    )
+    monkeypatch.setattr(service.fs, "_directory_index_records", AsyncMock(return_value=records))
+    set_tags = AsyncMock(side_effect=AssertionError("Already tagged records need no update"))
+    monkeypatch.setattr(service.fs, "set_tags", set_tags)
+
+    with pytest.raises(OpenVikingError, match="Compile directory tags are incomplete") as caught:
+        await service.fs.finalize_compile_directories(uri, ctx)
+
+    assert caught.value.code == "PROCESSING_ERROR"
+    set_tags.assert_not_awaited()
 
 
 async def test_fs_attrs_filters_legacy_non_kv_search_tags(monkeypatch):
