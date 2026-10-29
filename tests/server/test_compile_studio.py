@@ -914,7 +914,15 @@ async def test_compile_busy_publication_and_cleanup_retry_without_reindex(
         assert (snapshot.status, snapshot.stage) == ("running", "committing")
     monkeypatch.setattr(lifecycle, "_locked_output", busy_lock)
     cancellation.return_value = True
-    snapshot = await lifecycle.on_finish(task, completed)
+
+    async def cancel_and_finish():
+        """Finalize a busy run after one handled cancellation."""
+        asyncio.current_task().cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.sleep(0)
+        return await lifecycle.on_finish(task, completed)
+
+    snapshot = await asyncio.create_task(cancel_and_finish())
     assert (snapshot.status, snapshot.stage) == ("cancelling", "cancelling")
     run = await lifecycle.store.get_operation(ctx.account_id, target, compile_operation_id(task))
     assert run["finished_at"] is None and not run["meta"]["snapshot_committed"]
@@ -922,6 +930,8 @@ async def test_compile_busy_publication_and_cleanup_retry_without_reindex(
     monkeypatch.setattr(lifecycle, "_locked_output", original_lock)
     assert (await lifecycle.on_finish(task, completed)).status == "cancelled"
     assert await service.viking_fs.read_file(f"{target}/page.md", ctx=ctx) == "baseline"
+    record = await lifecycle.store.get(ctx.account_id, target)
+    assert record["active_task_id"] is None and record["active_operation_id"] is None
     service.reindex.assert_not_awaited()
 
 
