@@ -298,13 +298,22 @@ class CompileStateStore:
         Missing states are skipped;
         other I/O and JSON errors propagate. Enumeration is not a point-in-time snapshot.
         """
+        async for directory in self._iter_target_dirs(account_id, cursor=cursor):
+            record = await self.read_json(f"{directory}/state.json")
+            if record is not None:
+                yield summarize(_normalize_schedule(record))
+
+    async def _iter_target_dirs(
+        self, account_id: str, *, cursor: Optional[str] = None
+    ) -> AsyncIterator[str]:
+        """Yield metadata paths in hash order after a target URI cursor, without state reads."""
         directory = f"{self.root(account_id)}/target_folders"
         try:
             entries = await self._agfs.ls(directory)
         except (AGFSNotFoundError, FileNotFoundError):
             return
         after = hashlib.sha256(cursor.rstrip("/").encode("utf-8")).hexdigest() if cursor else ""
-        # shortcut: ls enumerates all target entries; use cursor-based directory listing when enumeration dominates.
+        # shortcut: ls lists all names; use range listing when enumeration dominates.
         for entry in entries:
             name = str(entry.get("name") or "")
             if (
@@ -313,9 +322,7 @@ class CompileStateStore:
                 or name <= after
             ):
                 continue
-            record = await self.read_json(f"{directory}/{name}/state.json")
-            if record is not None:
-                yield summarize(_normalize_schedule(record))
+            yield f"{directory}/{name}"
 
     # ---------- state.json ----------
 
@@ -482,29 +489,25 @@ class CompileStateStore:
             pass
 
     async def _iter_history(self) -> AsyncIterator[Optional[tuple[str, str, str]]]:
-        """Yield history IDs without locks; account and target visits also consume the batch."""
+        """Yield history IDs, counting account/target visits before reading target state."""
         for account_id in await self.list_accounts():
             yield None
             try:
-                targets = await self.list_summaries(account_id)
+                async for directory in self._iter_target_dirs(account_id):
+                    yield None
+                    try:
+                        record = await self.read_json(f"{directory}/state.json")
+                        if record is None or record.get("active_task_id"):
+                            continue
+                        target_to = record["to"]
+                        names = await self.list_dir(f"{directory}/operations")
+                    except Exception:
+                        logger.exception("Cannot scan Compile history in %s", directory)
+                        continue
+                    for name in names:
+                        yield account_id, target_to, name[:-5]
             except Exception:
                 logger.exception("Cannot scan Compile history for account %s", account_id)
-                continue
-            for target in targets:
-                yield None
-                target_to = target["to"]
-                try:
-                    record = await self.get(account_id, target["to"])
-                    if record is None or record.get("active_task_id"):
-                        continue
-                    names = await self.list_dir(
-                        f"{self._target_dir(account_id, target_to)}/operations"
-                    )
-                except Exception:
-                    logger.exception("Cannot scan Compile history for %s/%s", account_id, target_to)
-                    continue
-                for name in names:
-                    yield account_id, target_to, name[:-5]
 
     async def delete_expired(self, *, now: float, limit: int) -> int:
         """Scan at most ``limit`` visits and return the number of expired operations removed.
