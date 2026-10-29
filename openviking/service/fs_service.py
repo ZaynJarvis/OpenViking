@@ -8,7 +8,7 @@ Provides file system operations: ls, mkdir, rm, mv, tree, stat, read, abstract, 
 
 import asyncio
 from collections.abc import Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Literal, Optional
 
@@ -588,9 +588,10 @@ class FSService:
         """Remove content and refresh derived data without changing Compile metadata."""
         viking_fs = self._ensure_initialized()
         await viking_fs._ensure_access(uri, ctx, action=AclAction.MANAGE)
+        delete_ctx = replace(ctx, bypass_acl=True)
         namespace_policy = namespace_policy_for_uri(uri)
         if namespace_policy.processing_mode is NamespaceProcessingMode.FILE_ONLY:
-            result = await viking_fs.rm(uri, recursive=recursive, ctx=ctx, no_vector=True)
+            result = await viking_fs.rm(uri, recursive=recursive, ctx=delete_ctx, no_vector=True)
             if isinstance(result, dict):
                 result["semantic_status"] = "skipped"
                 result["vector_status"] = "skipped"
@@ -600,7 +601,7 @@ class FSService:
         context_type = context_type_for_uri(uri)
         refresh_parent_uri = self._semantic_refresh_parent_uri(uri, context_type)
         memory_overview_uri = self._memory_overview_parent_uri(uri, context_type)
-        result = await viking_fs.rm(uri, recursive=recursive, ctx=ctx)
+        result = await viking_fs.rm(uri, recursive=recursive, ctx=delete_ctx)
         await self._sync_watch_after_rm(uri, account_id=ctx.account_id, context_type=context_type)
         # A refresh on a parent that no longer exists would lock its sidecar
         # paths and thereby recreate the deleted directory. Nothing to
@@ -1039,6 +1040,8 @@ class FSService:
         """Move content and Watch state, migrate exact-target Compile settings, and refresh parents."""
         viking_fs = self._ensure_initialized()
         await viking_fs._ensure_access(from_uri, ctx, action=AclAction.MANAGE)
+        await viking_fs._ensure_destination_access(to_uri, ctx)
+        move_ctx = replace(ctx, bypass_acl=True)
         watch_manager = self._get_watch_manager()
         use_watch_transaction = (
             watch_manager is not None
@@ -1073,10 +1076,10 @@ class FSService:
                     vector_mode=vector_mode,
                     copy_semantic_sidecars=False,
                 )
-            await viking_fs.mv(
+            result = await viking_fs.mv(
                 from_uri,
                 to_uri,
-                ctx=ctx,
+                ctx=move_ctx,
                 **options,
             )
             if use_watch_transaction:
@@ -1086,7 +1089,13 @@ class FSService:
                     )
                 except Exception as commit_error:
                     try:
-                        await viking_fs.mv(to_uri, from_uri, ctx=ctx, **options)
+                        await viking_fs.mv(
+                            to_uri,
+                            from_uri,
+                            ctx=move_ctx,
+                            restore_acl=result.get("source_acl", {}),
+                            **options,
+                        )
                     except Exception as rollback_error:
                         logger.exception("Move rollback failed: %s -> %s", to_uri, from_uri)
                         raise rollback_error from commit_error
