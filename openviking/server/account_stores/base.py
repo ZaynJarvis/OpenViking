@@ -125,6 +125,13 @@ class AccountStore(ABC):
     async def add_group_member(self, account_id: str, group_id: str, user_id: str) -> bool: ...
 
     @abstractmethod
+    async def add_group_members(
+        self, account_id: str, group_id: str, user_ids: list[str]
+    ) -> bool:
+        """Atomically add existing active users, ignoring duplicate memberships."""
+        ...
+
+    @abstractmethod
     async def remove_group_member(self, account_id: str, group_id: str, user_id: str) -> bool: ...
 
     @abstractmethod
