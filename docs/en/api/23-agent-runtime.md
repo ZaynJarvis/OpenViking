@@ -211,7 +211,6 @@ ov task status cmp_01abc
 
 Terminal task responses also contain the result or error.
 
-OpenViking reports a Compile task as `completed` only after the indexes for `to` and every descendant directory are readable and their directory records carry `compile_target=true`. Directory initialization preserves existing L0/L1 content and appends the tag while retaining other tags; when both summaries are absent, it creates only L0 with `This is the compile generated folder`. Files do not receive this tag. An indexing or tagging failure during finalization fails the task while retaining output that has already been committed.
 
 ### Cancel a task
 

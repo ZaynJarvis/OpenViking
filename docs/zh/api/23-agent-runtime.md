@@ -211,7 +211,6 @@ ov task status cmp_01abc
 
 任务进入终态后，响应还会包含结果或错误。
 
-OpenViking 仅在 `to` 及全部子目录的索引可读取，且目录索引记录均已追加 `compile_target=true` 后，才将 Compile 任务标记为 `completed`。目录初始化保留已有 L0/L1 内容，追加标签时保留其他标签；两层摘要都缺失时，仅创建正文为 `This is the compile generated folder` 的 L0。文件不会获得此标签。收尾阶段索引或打标失败会使任务失败，但保留已经提交的产物。
 
 ### 取消任务
 

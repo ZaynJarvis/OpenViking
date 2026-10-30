@@ -53,6 +53,9 @@ async def test_ensure_directory_index_preserves_content_and_tags(client, service
     await service.resources.wait_processed()
     original = await service.viking_fs.read_file(f"{uri}/.abstract.md", ctx=ctx)
     await service.fs.set_tags(uri, ["team=search"], mode="append", recursive=False, ctx=ctx)
+    await service.fs.set_tags(
+        f"{uri}/child", ["team=child"], mode="append", recursive=False, ctx=ctx
+    )
     acquire = AsyncMock(side_effect=AssertionError("Complete directory indexes need no tree lock"))
     monkeypatch.setattr(service.viking_fs._async_agfs, "pathlock_acquire_tree", acquire)
     store = service.viking_fs._get_vector_store()
@@ -65,7 +68,7 @@ async def test_ensure_directory_index_preserves_content_and_tags(client, service
         for task in await tracker.list_tasks(task_type="ensure_directory_index", **owner)
     }
     await service.fs.finalize_compile_directories(uri, ctx)
-    assert update_tags.await_count == 2
+    update_tags.assert_awaited_once()
     update_tags.reset_mock()
     await service.fs.finalize_compile_directories(uri, ctx)
     update_tags.assert_not_awaited()
@@ -81,8 +84,14 @@ async def test_ensure_directory_index_preserves_content_and_tags(client, service
     assert {record["level"] for record in records} == {0, 1, 2}
     assert {record["uri"] for record in records if record["level"] < 2} == {uri, f"{uri}/child"}
     assert all(
-        ("compile_target=true" in (record.get("search_tags") or [])) == (record["level"] < 2)
+        ("compile_target=true" in (record.get("search_tags") or []))
+        == (record["uri"] == uri and record["level"] < 2)
         for record in records
+    )
+    assert all(
+        "team=child" in record["search_tags"]
+        for record in records
+        if record["uri"] == f"{uri}/child" and record["level"] < 2
     )
     assert any(
         record["uri"] == uri and "team=search" in record["search_tags"] for record in records

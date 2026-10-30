@@ -1022,7 +1022,9 @@ async def _prepare_compile_task(service, target, ctx):
     )
 
 
-async def test_compile_publishes_async_file_indexes_and_directory_tags(service, app, monkeypatch):
+async def test_compile_publishes_async_file_indexes_and_root_directory_tag(
+    service, app, monkeypatch
+):
     from openviking.service.external_task_service import ExternalTaskSnapshot
     from openviking.storage.expr import PathScope
 
@@ -1061,7 +1063,12 @@ async def test_compile_publishes_async_file_indexes_and_directory_tags(service, 
     assert any(record["uri"] == page and record["level"] == 2 for record in records)
     l0 = {record["uri"]: record for record in records if record["level"] == 0}
     assert {target, f"{target}/child"} <= l0.keys()
-    assert all("compile_target=true" in l0[uri]["search_tags"] for uri in l0)
+    assert "compile_target=true" in l0[target]["search_tags"], records
+    assert all(
+        "compile_target=true" not in (record.get("search_tags") or [])
+        for record in records
+        if record["uri"] != target or record["level"] >= 2
+    ), records
     reindex.assert_not_awaited()
 
 
