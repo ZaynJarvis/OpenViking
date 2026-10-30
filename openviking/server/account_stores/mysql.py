@@ -1076,9 +1076,6 @@ class MySQLAccountStore(AccountStore):
             ).all()
         return tuple(group_id for group_id in group_ids if group_id is not None)
 
-    async def add_group_member(self, account_id: str, group_id: str, user_id: str) -> bool:
-        return await self.add_group_members(account_id, group_id, [user_id])
-
     async def add_group_members(
         self, account_id: str, group_id: str, user_ids: list[str]
     ) -> bool:

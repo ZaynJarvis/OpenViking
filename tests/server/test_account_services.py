@@ -422,7 +422,7 @@ async def test_distributed_authentication_state_is_shared_and_service_scoped():
         with pytest.raises(UnauthenticatedError):
             await reader.resolve_identity(old_key)
         await writer.create_group("acme", "engineering")
-        await writer.add_group_member("acme", "engineering", "alice")
+        await writer.add_group_members("acme", "engineering", ["alice"])
         assert await reader.get_user_group_ids("acme", "alice") == ("engineering",)
 
         await writer.delete_group("acme", "engineering")
@@ -552,9 +552,8 @@ async def test_group_deletion_preserves_users_and_persists_membership_removal():
         bob_key = await manager.register_user("acme", "bob")
         await manager.create_group("acme", "engineering")
         await manager.create_group("acme", "reviewers")
-        await manager.add_group_member("acme", "engineering", "alice")
-        await manager.add_group_member("acme", "engineering", "bob")
-        await manager.add_group_member("acme", "reviewers", "bob")
+        await manager.add_group_members("acme", "engineering", ["alice", "bob"])
+        await manager.add_group_members("acme", "reviewers", ["bob"])
         assert await manager.get_user_group_ids("acme", "bob") == (
             "engineering",
             "reviewers",

@@ -2976,7 +2976,7 @@ async def test_add_group_members_batch_validates_all_users_before_writing(
     await manager.register_user(account, "alice")
     await manager.create_account(_uid(), "other-account-user")
     await manager.create_group(account, "engineering")
-    await manager.add_group_member(account, "engineering", "owner")
+    await manager.add_group_members(account, "engineering", ["owner"])
     url = f"/api/v1/admin/accounts/{account}/groups/engineering/members"
 
     for missing_user in ("missing", "other-account-user"):
@@ -4097,7 +4097,7 @@ async def test_user_page_summary_and_search_preserve_legacy_response(
     from openviking_cli.exceptions import PermissionDeniedError
 
     await manager.create_group(acct, "engineering")
-    await manager.add_group_member(acct, "engineering", "user-1")
+    await manager.add_group_members(acct, "engineering", ["user-1"])
     request = FastAPIRequest({"type": "http", "app": lightweight_admin_app})
     context = SimpleNamespace(request_context=SimpleNamespace(request=request))
     for role in (Role.USER, Role.ADMIN, Role.ROOT):

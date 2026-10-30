@@ -67,7 +67,7 @@ async def manager(request):
 
 
 async def test_batch_add_is_idempotent_and_updates_all_membership_indexes(manager):
-    await manager.add_group_member("acme", "engineering", "admin")
+    await manager.add_group_members("acme", "engineering", ["admin"])
     user_ids = ["bob", "alice", "admin", "bob"]
 
     assert await manager.add_group_members("acme", "engineering", user_ids) is True
@@ -84,7 +84,7 @@ async def test_batch_add_is_idempotent_and_updates_all_membership_indexes(manage
 
 async def test_batch_rejects_user_from_another_account_without_partial_additions(manager):
     await manager.create_account("other", "outsider")
-    await manager.add_group_member("acme", "engineering", "admin")
+    await manager.add_group_members("acme", "engineering", ["admin"])
 
     with pytest.raises(NotFoundError, match="User not found"):
         await manager.add_group_members("acme", "engineering", ["alice", "outsider", "bob"])

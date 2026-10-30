@@ -1689,11 +1689,6 @@ class FileStore(AccountStore):
         await self._ensure_account_groups_loaded(account_id)
         return self._get_user_group_ids(account_id, user_id)
 
-    async def add_group_member(
-        self, account_id: str, group_id: str, user_id: str
-    ) -> bool:
-        return await self.add_group_members(account_id, group_id, [user_id])
-
     async def add_group_members(
         self, account_id: str, group_id: str, user_ids: list[str]
     ) -> bool:
