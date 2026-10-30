@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -86,6 +86,180 @@ def _single_account_backend(async_adapter, account_id: str | None):
     backend._retired = False
     backend._async_adapter = async_adapter
     return backend
+
+
+@pytest.fixture
+def event_ttl(monkeypatch):
+    from openviking.ttl import wiring
+    from openviking.ttl.runtime import DirectoryTTL
+    from openviking_cli.utils.config.ttl_config import TTLConfig
+
+    engine = DirectoryTTL(resource_id="query-filter", writer=False)
+    engine.policies = AsyncMock(
+        return_value=(
+            TTLConfig(user_events=120, peer_events=30),
+            TTLConfig(user_events=30, peer_events=7),
+        )
+    )
+    engine.fs = SimpleNamespace(read_file=AsyncMock(return_value='{"ttl":{"user_events":90}}'))
+    engine.client = AsyncMock(side_effect=AssertionError("retrieval must not query TTL Redis"))
+    engine._cache_user_policy(("acct", "alice"), TTLConfig(user_events=90))
+    engine._cache_user_policy(("acct", "bob"), TTLConfig(user_events=1))
+    monkeypatch.setattr(wiring, "_adapter", engine)
+    return engine
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_prefilters_real_vectors_before_limit(
+    vector_backend_factory, tmp_path, event_ttl
+):
+    now = datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
+    backend = vector_backend_factory(
+        config=VectorDBBackendConfig(
+            backend="local", name="context", dimension=4, path=str(tmp_path / "ttl_vectors")
+        )
+    )
+    records = []
+
+    def add(name, path, days, *, level=2, tags=None):
+        records.append(
+            {
+                "id": name,
+                "uri": f"viking://{path}/{name}.md",
+                "account_id": "acct",
+                "context_type": "memory" if "/memories/" in path else "resource",
+                "level": level,
+                "search_tags": tags if tags is not None else ["memory_type=events", "qa=keep"],
+                "created_at": (now - timedelta(days=days)).isoformat(),
+                "vector": [1.0, 0.0, 0.0, 0.0],
+            }
+        )
+
+    for level in (0, 1, 2):
+        add(f"expired-{level}", "user/alice/memories/events/2026/07/01", 100, level=level)
+        add(f"retained-{level}", "user/alice/memories/events/2026/08/31", 60, level=level)
+    add("boundary", "user/alice/memories/events/2026/08/01", 90)
+    add("peer-expired", "user/alice/peers/one/memories/events/2026/10/22", 8)
+    add("peer-retained", "user/alice/peers/two/memories/events/2026/10/29", 1)
+    add("facts", "user/alice/peers/one/memories/facts", 100, tags=["memory_type=facts", "qa=keep"])
+    add("resource", "resources/notes", 100)
+    add("legacy", "user/alice/memories/events/2026/01/01", 100, tags=["qa=keep"])
+    add("caller-excluded", "user/alice/memories/events/2026/10/29", 1, tags=["memory_type=events"])
+    add("foreign-user", "user/bob/memories/events/2026/10/29", 1)
+    expected = {
+        "retained-0",
+        "retained-1",
+        "retained-2",
+        "peer-retained",
+        "facts",
+        "resource",
+        "legacy",
+    }
+    try:
+        assert await backend.create_collection(
+            "context", CollectionSchemas.context_collection("context", 4)
+        )
+        await backend._upsert_many_raw(records, ctx=_ctx(role=Role.ROOT))
+        kwargs = {"ctx": _ctx(), "extra_filter": Eq("search_tags", "qa=keep"), "limit": 100}
+        # Freeze the query clock without changing the policy cache's clock.
+        original = event_ttl.event_filter
+
+        async def at_fixed_time(ctx, targets, _now=None):
+            return await original(ctx, targets, now)
+
+        event_ttl.event_filter = at_fixed_time
+        found = await backend.filter_in_tenant(**kwargs)
+        assert {item["uri"].rsplit("/", 1)[-1][:-3] for item in found} == expected
+        kwargs["limit"] = 2
+        found = await backend.search_in_tenant(query_vector=[1.0, 0.0, 0.0, 0.0], **kwargs)
+        assert len(found) == 2
+        assert {item["uri"].rsplit("/", 1)[-1][:-3] for item in found} <= expected
+        event_ttl.fs.read_file.assert_not_awaited()
+        event_ttl.client.assert_not_awaited()
+        assert event_ttl._task is None and event_ttl._registration_task is None
+    finally:
+        await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_keywords_and_explicit_user_use_target_policy(event_ttl):
+    ctx = _ctx(role=Role.ROOT)
+    targets = ["viking://user/bob/memories/events"]
+    backend = object.__new__(VikingVectorIndexBackend)
+    backend.acl_manager = None
+    tenant_backend = SimpleNamespace(search_by_keywords=AsyncMock(return_value=[]))
+    backend._get_backend_for_context = AsyncMock(return_value=tenant_backend)
+    await backend.search_by_keywords_in_tenant(
+        ctx=ctx,
+        query="meeting",
+        target_directories=targets,
+        extra_filter=Eq("search_tags", "qa=keep"),
+        limit=3,
+    )
+    actual = tenant_backend.search_by_keywords.await_args.kwargs
+    assert actual["limit"] == 3 and actual["mode"] == "bm25"
+    scope, ttl = actual["filter"].conds
+    assert scope == _build(
+        ctx, targets, context_type=None, extra_filter=Eq("search_tags", "qa=keep")
+    )
+    branch = ttl.conds[1].conds[0].conds
+    assert branch[0].payload["conds"] == targets
+    cutoff = datetime.fromisoformat(branch[1].gt.replace("Z", "+00:00"))
+    assert abs((datetime.now(timezone.utc) - cutoff).total_seconds() - 86400) < 5
+    event_ttl.fs.read_file.assert_not_awaited()
+    event_ttl.client.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_reuses_one_user_config_load_and_refresh(event_ttl):
+    import time
+
+    event_ttl._dispatcher.bind_current_loop()
+    event_ttl._user_policies.clear()
+    targets = ["viking://user/alice", "viking://user/alice/peers/one"]
+    now = datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
+    first = await event_ttl.event_filter(_ctx(), targets, now)
+    assert await event_ttl.event_filter(_ctx(), targets, now) == first
+    assert event_ttl.fs.read_file.await_count == 1
+    key = ("acct", "alice")
+    event_ttl._user_policies[key] = (time.monotonic() - 31, event_ttl._user_policies[key][1])
+    event_ttl.fs.read_file.return_value = (
+        '{"ttl":{"user_events":"disabled","peer_events":"disabled"}}'
+    )
+    assert await event_ttl.event_filter(_ctx(), targets, now) is None
+    assert event_ttl.fs.read_file.await_count == 2
+    event_ttl.client.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_disabled_and_unrelated_queries_keep_existing_scope(event_ttl, monkeypatch):
+    from openviking.ttl import wiring
+    from openviking_cli.utils.config.ttl_config import TTLConfig
+
+    backend = object.__new__(VikingVectorIndexBackend)
+    backend.acl_manager = None
+    kwargs = {
+        "ctx": _ctx(),
+        "context_type": None,
+        "target_directories": None,
+        "extra_filter": Eq("level", 2),
+        "acl_enabled": False,
+    }
+    expected = backend._build_scope_filter(**kwargs)
+    monkeypatch.setattr(wiring, "_adapter", None)
+    assert await backend._build_retrieval_filter(**kwargs) == expected
+    event_ttl.policies.assert_not_awaited()
+    monkeypatch.setattr(wiring, "_adapter", event_ttl)
+    event_ttl._cache_user_policy(
+        ("acct", "alice"), TTLConfig(user_events="disabled", peer_events="disabled")
+    )
+    assert await backend._build_retrieval_filter(**kwargs) == expected
+    event_ttl.policies.reset_mock()
+    for targets in (["viking://resources"], ["viking://user/alice/sessions"], None):
+        assert await event_ttl.event_filter(_ctx(role=Role.ROOT), targets) is None
+    event_ttl.policies.assert_not_awaited()
+    event_ttl.fs.read_file.assert_not_awaited()
+    event_ttl.client.assert_not_awaited()
 
 
 @pytest.mark.asyncio
