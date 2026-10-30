@@ -284,7 +284,7 @@ async def test_viking_client_search_preserves_serialized_group_results(monkeypat
             "resources": [
                 {
                     "context_type": "resource",
-                    "uri": "viking://resources/解释信-杜涛/解释信-杜涛.md",
+                    "uri": "viking://resources/示例文档/示例文档.md",
                     "abstract": "resource hit",
                     "score": 0.4,
                 }
@@ -302,16 +302,16 @@ async def test_viking_client_search_preserves_serialized_group_results(monkeypat
 
     monkeypatch.setattr(client.client, "search", _search)
 
-    result = await client.search("解释信", target_uri="", limit=10)
+    result = await client.search("示例文档", target_uri="", limit=10)
 
     assert result["total"] == 3
-    assert result["query"] == "解释信"
+    assert result["query"] == "示例文档"
     assert result["target_uri"] == ""
     assert [item["uri"] for item in result["memories"]] == [
         "viking://user/default/memories/profile.md"
     ]
     assert [item["uri"] for item in result["resources"]] == [
-        "viking://resources/解释信-杜涛/解释信-杜涛.md"
+        "viking://resources/示例文档/示例文档.md"
     ]
     assert [item["uri"] for item in result["skills"]] == ["viking://user/default/skills/planner.md"]
 

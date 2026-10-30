@@ -480,7 +480,7 @@ def _langchain_messages_to_openai(
 def _call_llm(messages: list[dict[str, str]]) -> str:
     client = OpenAI(
         api_key=os.environ["ARK_API_KEY"],
-        base_url=os.environ.get("ARK_BASE_URL", "https://ark-cn-beijing.bytedance.net/api/v3"),
+        base_url=os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
     )
     completion = client.chat.completions.create(
         model=os.environ.get("ARK_MODEL", "doubao-seed-2-0-code-preview-260215"),

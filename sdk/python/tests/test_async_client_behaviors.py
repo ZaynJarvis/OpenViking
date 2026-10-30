@@ -137,16 +137,16 @@ async def test_async_http_client_batch_add_messages_url_encodes_session_id():
     }
 
     session_id = (
-        "feishu__cli_a938e530eb7c9bd9__"
-        "oc_aa9e08fddf5727f9c53400a07ff505cd#om_x100b6ff6c3df48ace10030ac68d3eb4"
+        "feishu__cli_0000000000000001__"
+        "oc_00000000000000000000000000000002#om_00000000000000000000000000000003"
     )
 
     await client.batch_add_messages(session_id, [{"role": "user", "content": "hello"}])
 
     fake_http.post.assert_awaited_once_with(
         "/api/v1/sessions/"
-        "feishu__cli_a938e530eb7c9bd9__"
-        "oc_aa9e08fddf5727f9c53400a07ff505cd%23om_x100b6ff6c3df48ace10030ac68d3eb4"
+        "feishu__cli_0000000000000001__"
+        "oc_00000000000000000000000000000002%23om_00000000000000000000000000000003"
         "/messages/batch",
         json={"messages": [{"role": "user", "content": "hello"}]},
     )

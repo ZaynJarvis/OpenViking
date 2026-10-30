@@ -443,9 +443,9 @@ def test_cloud_recall_legacy_fallback(external_provider, monkeypatch):
 @pytest.mark.parametrize(
     "uri",
     [
-        "viking://user/zayn/memories/profile.md",
-        "viking://user/zayn/memories/preferences/mem_abc123.md",
-        "viking://user/zayn/peers/hermes/memories/preferences/mem_abc123.md",
+        "viking://user/test-user/memories/profile.md",
+        "viking://user/test-user/memories/preferences/mem_abc123.md",
+        "viking://user/test-user/peers/hermes/memories/preferences/mem_abc123.md",
         "viking://~/memories/profile.md",
         "viking://~/memories/preferences/mem_abc123.md",
         "viking://~/peers/hermes/memories/preferences/mem_abc123.md",
@@ -453,7 +453,7 @@ def test_cloud_recall_legacy_fallback(external_provider, monkeypatch):
 )
 def test_external_provider_accepts_canonical_forget_uris(external_provider, uri):
     _, _, module, _ = external_provider("forget-canonical")
-    user_space = "zayn" if uri.startswith("viking://user/") else None
+    user_space = "test-user" if uri.startswith("viking://user/") else None
 
     assert module._validate_forget_memory_uri(uri, user_space=user_space) == (uri, None)
 
@@ -478,7 +478,7 @@ def test_external_provider_rejects_other_user_forget_uri(external_provider):
     _, _, module, _ = external_provider("forget-other-user")
     uri = "viking://user/someone-else/memories/preferences/mem_abc123.md"
 
-    resolved, error = module._validate_forget_memory_uri(uri, user_space="zayn")
+    resolved, error = module._validate_forget_memory_uri(uri, user_space="test-user")
 
     assert resolved is None
     assert "your own memories" in error

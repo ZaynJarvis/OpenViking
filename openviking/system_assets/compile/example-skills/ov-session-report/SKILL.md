@@ -141,9 +141,9 @@ Masking rules:
 
 - One character: display `*`.
 - Two characters: preserve the first character, for example `张三 -> 张*`.
-- Three or more characters: preserve the first and last characters and replace every middle character with `*`, for example `秦浩杰 -> 秦*杰`.
+- Three or more characters: preserve the first and last characters and replace every middle character with `*`, for example `甲乙丙 -> 甲*丙`.
 - Apply the same character-based rule to Latin, numeric, and mixed aliases, for example `darren -> d****n` and `Lin101 -> L****1`.
-- User-declared sensitive names override the general rule and preserve only the first character, for example `胡江涛 -> 胡**`.
+- User-declared sensitive names override the general rule and preserve only the first character, for example `丁戊己 -> 丁**`.
 - In Markdown prose, escape masking asterisks when they appear inside emphasis, for example `Q\*n`; keep the raw value as `Q*n` in structured JSON.
 
 The final Markdown and structured JSON must not contain complete human names, email addresses, phone numbers, raw identity keys, Authorization values, API keys, root keys, tenant keys, or long credential-like strings.
