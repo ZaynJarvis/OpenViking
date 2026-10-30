@@ -3052,16 +3052,19 @@ async def test_add_group_members_batch_replaces_single_add_but_keeps_single_remo
     ],
 )
 async def test_add_group_members_batch_rejects_invalid_body(
-    lightweight_admin_client, lightweight_admin_app, body, monkeypatch
+    admin_client, admin_app, body, monkeypatch
 ):
     add = AsyncMock()
-    monkeypatch.setattr(lightweight_admin_app.state.api_key_manager, "add_group_members", add)
-    response = await lightweight_admin_client.put(
+    monkeypatch.setattr(admin_app.state.api_key_manager, "add_group_members", add)
+    response = await admin_client.put(
         "/api/v1/admin/accounts/acme/groups/engineering/members",
         json=body,
         headers=root_headers(),
     )
-    assert response.status_code == 422, response.text
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert error["code"] == "INVALID_ARGUMENT"
+    assert error["details"]["validation_errors"]
     add.assert_not_awaited()
 
 
